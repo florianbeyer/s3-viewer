@@ -4,7 +4,9 @@
 
 A desktop app for browsing OpenStack and other S3 buckets. Open files, change them, and move them between your machine and the bucket.
 
-![Dark and light mode](<misc/Dark and light mode comparison.png>)
+<img src="misc/Forest%20segmentation%20storage%20and%20YAML%20preview.png" alt="Browsing a bucket and previewing a YAML file" width="100%">
+
+<img src="misc/Dark%20and%20light%20mode%20comparison.png" alt="Dark and light mode" width="72%">
 
 ## Features
 
