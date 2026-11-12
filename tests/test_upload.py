@@ -3,7 +3,14 @@ from pathlib import Path
 import pytest
 
 from s3viewer.s3 import ConnectionSettings, S3Session
-from s3viewer.upload import colliding_keys, folder_upload_plan, upload_destination_label, upload_plan, uploaded_message
+from s3viewer.upload import colliding_keys, folder_marker_key, folder_upload_plan, upload_destination_label, upload_plan, uploaded_message
+
+
+def test_folder_marker_uses_the_open_folder_and_rejects_slashes():
+    assert folder_marker_key("daten/2024/", "stapel") == "daten/2024/stapel/"
+    assert folder_marker_key("", "neu") == "neu/"
+    with pytest.raises(ValueError, match="Schrägstriche"):
+        folder_marker_key("", "a/b")
 
 
 def test_upload_plan_uses_the_open_folder_and_file_name():
@@ -74,6 +81,23 @@ def test_put_text_sends_the_body_and_content_type():
     assert saved["Key"] == "note.txt"
     assert saved["Body"] == b"neu\n"
     assert saved["ContentType"] == "text/plain; charset=utf-8"
+
+
+def test_create_folder_puts_an_empty_marker():
+    saved: dict = {}
+
+    class Client:
+        def put_object(self, **kwargs):
+            saved.update(kwargs)
+
+    session = S3Session(
+        ConnectionSettings(endpoint_url="https://s3.example.com", access_key="ak", secret_key="sk"),
+        client=Client(),
+    )
+    session.create_folder("projekt", "ordner/neu")
+    assert saved["Bucket"] == "projekt"
+    assert saved["Key"] == "ordner/neu/"
+    assert saved["Body"] == b""
 
 
 def test_folder_upload_keeps_subfolders(tmp_path: Path):

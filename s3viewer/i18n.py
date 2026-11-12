@@ -36,6 +36,36 @@ STRINGS: dict[str, dict[str, str]] = {
         "de": "Lädt einen Ordner mit allen Unterordnern in den geöffneten Bucket und Ordner hoch.",
         "en": "Uploads a folder and its subfolders into the open bucket and folder.",
     },
+    "new_folder": {"de": "Neuer Ordner", "en": "New folder"},
+    "new_folder_tip": {
+        "de": "Legt im geöffneten Bucket und Ordner einen neuen Ordner an.",
+        "en": "Creates a new folder in the open bucket and folder.",
+    },
+    "new_folder_title": {"de": "Neuer Ordner", "en": "New folder"},
+    "new_folder_label": {"de": "Name", "en": "Name"},
+    "new_folder_invalid": {
+        "de": "Der Ordnername darf nicht leer sein und keine Schrägstriche enthalten.",
+        "en": "The folder name must not be empty or contain slashes.",
+    },
+    "new_folder_exists": {"de": "Der Ordner „{name}“ ist schon da.", "en": "The folder “{name}” already exists."},
+    "new_folder_created": {"de": "Ordner „{name}“ angelegt", "en": "Created folder “{name}”"},
+    "delete": {"de": "Löschen", "en": "Delete"},
+    "delete_tip": {
+        "de": "Löscht die markierten Dateien und Ordner. Ein Ordner wird mit seinem Inhalt gelöscht. Mehrere mit Strg+Klick oder Umschalt+Klick auswählen.",
+        "en": "Deletes the selected files and folders. A folder is deleted with its contents. Ctrl+click or Shift+click selects more than one.",
+    },
+    "delete_title": {"de": "Löschen", "en": "Delete"},
+    "delete_body": {
+        "de": "Diese Einträge werden unwiderruflich gelöscht:\n{names}",
+        "en": "These items will be permanently deleted:\n{names}",
+    },
+    "delete_folders": {
+        "de": "\nOrdner werden zusammen mit allem Inhalt gelöscht.",
+        "en": "\nFolders are deleted together with everything inside.",
+    },
+    "deleted_one": {"de": "1 Objekt gelöscht", "en": "1 object deleted"},
+    "deleted_many": {"de": "{count} Objekte gelöscht", "en": "{count} objects deleted"},
+    "transfer_delete": {"de": "Löschen", "en": "Delete"},
     "save_profile": {"de": "Speichern", "en": "Save"},
     "save_profile_tip": {
         "de": "Endpunkt und Zugangsdaten unter einem Namen in ~/.s3-viewer speichern",

@@ -183,16 +183,64 @@ def test_several_files_can_be_selected_for_download(qtbot, tmp_path):
     qtbot.waitUntil(lambda: _object_names(window) == ["daten", "readme.txt"], timeout=4000)
     assert window.upload_button.isEnabled() is True
     assert window.upload_folder_button.isEnabled() is True
+    assert window.new_folder_button.isEnabled() is True
     assert window.save_button.isEnabled() is False
+    assert window.delete_button.isEnabled() is False
 
     _select_rows(window, ["daten", "readme.txt"])
     assert {entry.name for entry in window._selected_entries()} == {"daten", "readme.txt"}
+    assert window.delete_button.isEnabled() is True
     assert window.save_button.isEnabled() is True
 
     window.filter_edit.setText("read")
     window.object_table.setFocus()
     qtbot.keyClick(window.object_table, Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier)
     assert {entry.name for entry in window._selected_entries()} == {"readme.txt"}
+
+
+def test_selected_files_and_folders_can_be_deleted(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    class Session(FakeSession):
+        def list_object_keys(self, bucket, prefix):
+            assert bucket == "projekt"
+            assert prefix == "daten/"
+            return ["daten/tabelle.csv", "daten/leer/"], False
+
+        def delete_keys(self, bucket, keys, progress=None):
+            self.deleted = (bucket, list(keys))
+            if progress is not None:
+                progress(len(keys))
+            return len(keys)
+
+    window = MainWindow(session_factory=Session, settings_path=str(tmp_path / "settings.ini"))
+    qtbot.addWidget(window)
+    window.show()
+    window.endpoint.setText("https://s3.example.com")
+    window.access_key.setText("ak")
+    window.secret_key.setText("sk")
+    qtbot.mouseClick(window.connect_button, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(lambda: window.bucket_list.count() == 2, timeout=4000)
+    _click_bucket(qtbot, window, "projekt")
+    qtbot.waitUntil(lambda: _object_names(window) == ["daten", "readme.txt"], timeout=4000)
+    _select_rows(window, ["daten", "readme.txt"])
+
+    monkeypatch.setattr(
+        "s3viewer.window.QMessageBox.question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.No,
+    )
+    window._delete_selected()
+    assert not hasattr(window.session, "deleted")
+
+    monkeypatch.setattr(
+        "s3viewer.window.QMessageBox.question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes,
+    )
+    window._delete_selected()
+    qtbot.waitUntil(lambda: getattr(window.session, "deleted", None) is not None, timeout=4000)
+    bucket, keys = window.session.deleted
+    assert bucket == "projekt"
+    assert set(keys) == {"daten/tabelle.csv", "daten/leer/", "daten/", "readme.txt"}
 
 
 def test_tiff_file_shows_a_coarse_preview(qtbot, tmp_path):
@@ -275,6 +323,7 @@ def test_connection_panel_folds_up(qtbot, tmp_path):
     qtbot.addWidget(window)
     window.show()
     assert window.upload_button.isEnabled() is False
+    assert window.new_folder_button.isEnabled() is False
     window.endpoint.setText("https://s3.example.com/bucket")
     assert window.connection_body.isVisible()
     assert window.endpoint.isVisible()
@@ -507,6 +556,26 @@ def test_transfer_bar_shows_bytes_for_upload_and_download(qtbot, tmp_path, monke
     window._download_entries([ObjectEntry("readme.txt", "readme.txt", False, 11)])
     qtbot.waitUntil(lambda: window._transfer_active is False and window._transfer_peak == 11, timeout=4000)
     assert (tmp_path / "readme.txt").read_bytes() == b"Hallo Welt\n"
+
+
+def test_new_folder_is_created_in_the_open_prefix(qtbot, tmp_path, monkeypatch):
+    class Session(FakeSession):
+        def create_folder(self, bucket, key):
+            self.created = (bucket, key)
+
+    window = MainWindow(session_factory=FakeSession, settings_path=str(tmp_path / "settings.ini"))
+    qtbot.addWidget(window)
+    window.show()
+    window.session = Session()
+    window.bucket_name = "projekt"
+    window.prefix = "daten/"
+    monkeypatch.setattr("s3viewer.window.QInputDialog.getText", lambda *_args, **_kwargs: ("a/b", True))
+    window._create_folder()
+    assert "Schrägstriche" in window.banner.text()
+
+    monkeypatch.setattr("s3viewer.window.QInputDialog.getText", lambda *_args, **_kwargs: ("stapel", True))
+    window._create_folder()
+    qtbot.waitUntil(lambda: getattr(window.session, "created", None) == ("projekt", "daten/stapel/"), timeout=4000)
 
 
 def test_download_can_be_cancelled(qtbot, tmp_path, monkeypatch):

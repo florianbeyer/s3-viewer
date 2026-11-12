@@ -7,6 +7,16 @@ from pathlib import Path
 from s3viewer.i18n import tr
 
 
+def folder_marker_key(prefix: str, name: str) -> str:
+    cleaned = " ".join(name.strip().split())
+    if not cleaned or cleaned in {".", ".."} or "/" in cleaned or "\\" in cleaned:
+        raise ValueError(tr("new_folder_invalid"))
+    folder = prefix or ""
+    if folder and not folder.endswith("/"):
+        folder += "/"
+    return f"{folder}{cleaned}/"
+
+
 def upload_key(prefix: str, local_path: str) -> str:
     name = Path(local_path).name
     if not name or name in {".", ".."} or "/" in name or "\\" in name:

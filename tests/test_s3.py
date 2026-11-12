@@ -140,6 +140,7 @@ def test_list_file_keys_includes_nested_files_and_skips_folder_markers():
                     {"Key": "daten/", "Size": 0},
                     {"Key": "daten/a.txt", "Size": 1},
                     {"Key": "daten/sub/b.txt", "Size": 2},
+                    {"Key": "daten/leer/", "Size": 0},
                 ],
             }
 
@@ -150,6 +151,41 @@ def test_list_file_keys_includes_nested_files_and_skips_folder_markers():
     records, capped = session.list_files("bucket", "daten")
     assert records == [("daten/a.txt", 1), ("daten/sub/b.txt", 2)]
     assert capped is False
+    object_keys, capped = session.list_object_keys("bucket", "daten")
+    assert object_keys == ["daten/a.txt", "daten/sub/b.txt", "daten/leer/"]
+    assert capped is False
+
+
+def test_delete_keys_batches_and_ignores_missing_objects():
+    calls: list[dict] = []
+
+    class Client:
+        def delete_objects(self, **kwargs):
+            calls.append(kwargs)
+            return {"Errors": [{"Key": "weg", "Code": "NoSuchKey", "Message": "no"}]}
+
+    session = S3Session(_settings(), client=Client())
+    assert session.delete_keys("bucket", ["a.txt", "a.txt", "weg"]) == 2
+    assert calls[0]["Bucket"] == "bucket"
+    assert calls[0]["Delete"]["Objects"] == [{"Key": "a.txt"}, {"Key": "weg"}]
+
+
+def test_delete_keys_falls_back_to_single_deletes():
+    singles: list[str] = []
+
+    class Client:
+        def delete_objects(self, **_kwargs):
+            raise ClientError(
+                {"Error": {"Code": "NotImplemented", "Message": "no"}, "ResponseMetadata": {"HTTPStatusCode": 501}},
+                "DeleteObjects",
+            )
+
+        def delete_object(self, **kwargs):
+            singles.append(kwargs["Key"])
+
+    session = S3Session(_settings(), client=Client())
+    assert session.delete_keys("bucket", ["a.txt", "b/"]) == 2
+    assert singles == ["a.txt", "b/"]
 
 
 def _settings() -> ConnectionSettings:

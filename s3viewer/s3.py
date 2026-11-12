@@ -350,6 +350,88 @@ class S3Session:
                 break
         return records, capped
 
+    def list_object_keys(self, bucket: str, prefix: str) -> tuple[list[str], bool]:
+        """Alle Schlüssel unter einem Präfix, inklusive Ordner-Platzhalter."""
+        prefix = prefix or ""
+        if prefix and not prefix.endswith("/"):
+            prefix += "/"
+        keys: list[str] = []
+        token: str | None = None
+        capped = False
+        while True:
+            page, token = self._flat_page(bucket, prefix, token, include_folders=True)
+            keys.extend(key for key, _size in page)
+            if len(keys) >= MAX_LISTED:
+                keys = keys[:MAX_LISTED]
+                capped = True
+                break
+            if not token:
+                break
+        return keys, capped
+
+    def delete_keys(
+        self,
+        bucket: str,
+        keys: list[str],
+        progress: Callable[[int], None] | None = None,
+    ) -> int:
+        unique: list[str] = []
+        seen: set[str] = set()
+        for key in keys:
+            if key and key not in seen:
+                seen.add(key)
+                unique.append(key)
+        deleted = 0
+        batch = True
+        index = 0
+        while index < len(unique):
+            chunk = unique[index : index + 1000]
+            if batch:
+                try:
+                    self._delete_batch(bucket, chunk)
+                except ClientError as exc:
+                    if not _unsupported(exc):
+                        raise
+                    batch = False
+                else:
+                    deleted += len(chunk)
+                    if progress is not None:
+                        progress(len(chunk))
+                    index += len(chunk)
+                    continue
+            for key in chunk:
+                self._delete_one(bucket, key)
+                deleted += 1
+                if progress is not None:
+                    progress(1)
+            index += len(chunk)
+        return deleted
+
+    def _delete_batch(self, bucket: str, keys: list[str]) -> None:
+        def run() -> None:
+            response = self._client.delete_objects(
+                Bucket=bucket,
+                Delete={"Objects": [{"Key": key} for key in keys], "Quiet": True},
+            )
+            errors = [
+                error
+                for error in (response.get("Errors") or [])
+                if str(error.get("Code") or "") not in {"NoSuchKey", "404"}
+            ]
+            if not errors:
+                return
+            code = str(errors[0].get("Code") or "DeleteObjects")
+            message = str(errors[0].get("Message") or code)
+            raise ClientError(
+                {"Error": {"Code": code, "Message": message}, "ResponseMetadata": {"HTTPStatusCode": 403}},
+                "DeleteObjects",
+            )
+
+        self._call(run)
+
+    def _delete_one(self, bucket: str, key: str) -> None:
+        self._call(lambda: self._client.delete_object(Bucket=bucket, Key=key))
+
     def fetch(self, bucket: str, key: str, limit: int = 1_000_000) -> FetchedObject:
         meta = self._head(bucket, key)
         if meta is not None and meta.get("ContentLength") is not None:
@@ -476,6 +558,14 @@ class S3Session:
 
         self._call(run)
 
+    def create_folder(self, bucket: str, key: str) -> None:
+        marker = key if key.endswith("/") else f"{key}/"
+
+        def run() -> None:
+            self._client.put_object(Bucket=bucket, Key=marker, Body=b"")
+
+        self._call(run)
+
     def put_text(self, bucket: str, key: str, data: bytes, content_type: str) -> None:
         def run() -> None:
             self._client.put_object(Bucket=bucket, Key=key, Body=data, ContentType=content_type)
@@ -564,18 +654,24 @@ class S3Session:
                     next_token = prefixes[-1].get("Prefix")
         return response, next_token
 
-    def _flat_page(self, bucket: str, prefix: str, token: str | None) -> tuple[list[tuple[str, int]], str | None]:
+    def _flat_page(
+        self,
+        bucket: str,
+        prefix: str,
+        token: str | None,
+        include_folders: bool = False,
+    ) -> tuple[list[tuple[str, int]], str | None]:
         if self._list_api == "v2":
             try:
                 response, next_token = self._flat_v2(bucket, prefix, token)
-                return _file_records(prefix, response), next_token
+                return _file_records(prefix, response, include_folders=include_folders), next_token
             except ClientError as exc:
                 if token is None and _unsupported(exc):
                     self._list_api = "v1"
                 else:
                     raise
         response, next_token = self._flat_v1(bucket, prefix, token)
-        return _file_records(prefix, response), next_token
+        return _file_records(prefix, response, include_folders=include_folders), next_token
 
     def _flat_v2(self, bucket: str, prefix: str, token: str | None) -> tuple[dict[str, Any], str | None]:
         kwargs: dict[str, Any] = {"Bucket": bucket, "Prefix": prefix, "MaxKeys": PAGE_SIZE}
@@ -631,11 +727,13 @@ def build_client(settings: ConnectionSettings) -> Any:
     )
 
 
-def _file_records(prefix: str, response: dict[str, Any]) -> list[tuple[str, int]]:
+def _file_records(prefix: str, response: dict[str, Any], *, include_folders: bool = False) -> list[tuple[str, int]]:
     records: list[tuple[str, int]] = []
     for obj in response.get("Contents") or []:
         key = obj.get("Key") or ""
-        if not key or key == prefix or key.endswith("/"):
+        if not key or key == prefix:
+            continue
+        if key.endswith("/") and not include_folders:
             continue
         if prefix and not key.startswith(prefix):
             continue

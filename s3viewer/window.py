@@ -62,6 +62,7 @@ from s3viewer.profiles import (
 from s3viewer.tiffpreview import TIFF_PREVIEW_BYTE_LIMIT, is_tiff
 from s3viewer.upload import (
     colliding_keys,
+    folder_marker_key,
     folder_upload_plan,
     upload_destination_label,
     upload_plan,
@@ -313,6 +314,9 @@ class MainWindow(QMainWindow):
         muted = QColor("#64748b" if self._dark else "#94a3b8")
         self.connect_button.setIcon(_themed_icon(_draw_plug, color, muted))
         self.upload_button.setIcon(_themed_icon(_draw_upload, color, muted))
+        self.upload_folder_button.setIcon(_themed_icon(_draw_folder_upload, color, muted))
+        self.new_folder_button.setIcon(_themed_icon(_draw_folder_new, color, muted))
+        self.delete_button.setIcon(_themed_icon(_draw_trash, color, muted))
         self._sync_dark_button()
 
     def _sync_dark_button(self) -> None:
@@ -354,7 +358,13 @@ class MainWindow(QMainWindow):
                     item.setToolTip(tr("parent_folder"))
         self.cancel_download_button.setText(tr("cancel_download"))
         if self._transfer_active:
-            self.transfer_label.setText(tr("transfer_download") if self._transfer_kind == "download" else tr("transfer_upload"))
+            self.transfer_label.setText(
+                tr("transfer_download")
+                if self._transfer_kind == "download"
+                else tr("transfer_delete")
+                if self._transfer_kind == "delete"
+                else tr("transfer_upload")
+            )
         self.bucket_filter.setPlaceholderText(tr("filter_buckets"))
         self.bucket_filter.setToolTip(tr("filter_buckets_tip"))
         self.filter_edit.setPlaceholderText(tr("filter_files"))
@@ -460,13 +470,22 @@ class MainWindow(QMainWindow):
         self.save_button = self._icon_button("document-save", QStyle.StandardPixmap.SP_DialogSaveButton, "download_tip")
         self.save_button.clicked.connect(self._download_selected)
         files_header.addWidget(self.save_button)
+        self.delete_button = self._icon_button("edit-delete", QStyle.StandardPixmap.SP_TrashIcon, "delete_tip")
+        self.delete_button.setIcon(_themed_icon(_draw_trash, QColor("#1f2933"), QColor("#94a3b8")))
+        self.delete_button.clicked.connect(self._delete_selected)
+        files_header.addWidget(self.delete_button)
         self.upload_button = self._icon_button("go-up", QStyle.StandardPixmap.SP_ArrowUp, "upload_tip")
         self.upload_button.setIcon(_themed_icon(_draw_upload, QColor("#1f2933"), QColor("#94a3b8")))
         self.upload_button.clicked.connect(self._upload_files)
         files_header.addWidget(self.upload_button)
-        self.upload_folder_button = self._icon_button("folder-new", QStyle.StandardPixmap.SP_DirIcon, "upload_folder_tip")
+        self.upload_folder_button = self._icon_button("folder-download", QStyle.StandardPixmap.SP_DirIcon, "upload_folder_tip")
+        self.upload_folder_button.setIcon(_themed_icon(_draw_folder_upload, QColor("#1f2933"), QColor("#94a3b8")))
         self.upload_folder_button.clicked.connect(self._upload_folder)
         files_header.addWidget(self.upload_folder_button)
+        self.new_folder_button = self._icon_button("folder-new", QStyle.StandardPixmap.SP_DirIcon, "new_folder_tip")
+        self.new_folder_button.setIcon(_themed_icon(_draw_folder_new, QColor("#1f2933"), QColor("#94a3b8")))
+        self.new_folder_button.clicked.connect(self._create_folder)
+        files_header.addWidget(self.new_folder_button)
         files_header.addWidget(self.refresh_button)
         file_filter_row = QHBoxLayout()
         file_filter_row.addWidget(self.filter_edit, 1)
@@ -1652,6 +1671,50 @@ class MainWindow(QMainWindow):
             return
         self._download_entries(entries)
 
+    def _delete_selected(self) -> None:
+        entries = self._selected_entries()
+        if self.session is None or not entries or not self.bucket_name:
+            return
+        names = [entry.name for entry in entries]
+        visible = names[:12]
+        more = tr("replace_more", count=len(names) - 12) if len(names) > 12 else ""
+        body = tr("delete_body", names="\n".join(visible) + more)
+        if any(entry.is_folder for entry in entries):
+            body += tr("delete_folders")
+        answer = QMessageBox.question(self, tr("delete_title"), body)
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        session = self.session
+        bucket = self.bucket_name
+        folder = self.prefix
+        self._set_banner(None)
+        self._download_cancel = None
+        self._begin_transfer(0, kind="delete")
+
+        def work() -> tuple[int, bool]:
+            keys, capped = _keys_for_delete(session, bucket, entries)
+            self._transfer_signals.planned.emit(max(len(keys), 1))
+            count = session.delete_keys(
+                bucket,
+                keys,
+                progress=lambda amount: self._transfer_signals.advanced.emit(int(amount)),
+            )
+            return count, capped
+
+        def done(payload: object) -> None:
+            count, capped = payload  # type: ignore[misc]
+            self._set_banner(None)
+            message = tr("deleted_one") if count == 1 else tr("deleted_many", count=count)
+            if capped:
+                message += tr("list_capped", limit=MAX_LISTED)
+            self.statusBar().showMessage(message)
+            if self.session is not None and self.bucket_name == bucket and self.prefix == folder:
+                self._nav_guard_until = 0
+                self._current_entry = None
+                self._open_prefix(folder)
+
+        self._submit("delete", work, done, self._set_banner, track_transfer=True)
+
     def _selected_entries(self) -> list[ObjectEntry]:
         selected: list[ObjectEntry] = []
         seen: set[str] = set()
@@ -1788,6 +1851,43 @@ class MainWindow(QMainWindow):
             return
         self._upload_plan(plan)
 
+    def _create_folder(self) -> None:
+        if self.session is None or not self.bucket_name:
+            return
+        name, accepted = QInputDialog.getText(self, tr("new_folder_title"), tr("new_folder_label"))
+        if not accepted:
+            return
+        try:
+            key = folder_marker_key(self.prefix, name)
+        except ValueError as exc:
+            self._set_banner(str(exc))
+            return
+        folder_name = key.rstrip("/").rsplit("/", 1)[-1]
+        exists = any(
+            row.entry is not None and row.entry.is_folder and row.entry.name == folder_name
+            for row in self._rows
+        )
+        if exists:
+            self._set_banner(tr("new_folder_exists", name=folder_name))
+            return
+        session = self.session
+        bucket = self.bucket_name
+        folder = self.prefix
+        self._set_banner(None)
+
+        def work() -> str:
+            session.create_folder(bucket, key)
+            return key
+
+        def done(_key: object) -> None:
+            self._set_banner(None)
+            if self.session is not None and self.bucket_name == bucket and self.prefix == folder:
+                self._nav_guard_until = 0
+                self._open_prefix(folder)
+            self.statusBar().showMessage(tr("new_folder_created", name=folder_name))
+
+        self._submit("upload", work, done, self._set_banner)
+
     def _upload_plan(self, plan: list[tuple[str, str]]) -> None:
         if not self._confirm_existing_uploads(plan):
             return
@@ -1912,9 +2012,12 @@ class MainWindow(QMainWindow):
         self.disconnect_button.setEnabled(connected and not self._connecting)
         self.up_button.setEnabled(connected and bool(self.prefix))
         self.refresh_button.setEnabled(connected)
-        self.save_button.setEnabled(connected and bool(self._selected_entries()))
+        selected = connected and bool(self._selected_entries())
+        self.save_button.setEnabled(selected)
+        self.delete_button.setEnabled(selected)
         self.upload_button.setEnabled(connected and bool(self.bucket_name))
         self.upload_folder_button.setEnabled(connected and bool(self.bucket_name))
+        self.new_folder_button.setEnabled(connected and bool(self.bucket_name))
         file_selected = self._current_entry is not None and not self._current_entry.is_folder
         self.download_button.setEnabled(file_selected)
 
@@ -1924,7 +2027,13 @@ class MainWindow(QMainWindow):
         self._transfer_done = 0
         self._transfer_total = max(0, int(total))
         self._transfer_peak = 0
-        self.transfer_label.setText(tr("transfer_download") if kind == "download" else tr("transfer_upload"))
+        self.transfer_label.setText(
+            tr("transfer_download")
+            if kind == "download"
+            else tr("transfer_delete")
+            if kind == "delete"
+            else tr("transfer_upload")
+        )
         self.cancel_download_button.setVisible(kind == "download")
         self.cancel_download_button.setEnabled(kind == "download")
         self._show_transfer_value()
@@ -2051,6 +2160,31 @@ class MainWindow(QMainWindow):
         self.tasks.submit(fn, ok, err)
 
 
+def _keys_for_delete(session: S3Session, bucket: str, entries: list[ObjectEntry]) -> tuple[list[str], bool]:
+    keys: list[str] = []
+    capped = False
+    lister = getattr(session, "list_object_keys", None)
+    for entry in entries:
+        if entry.is_folder:
+            if lister is not None:
+                found, entry_capped = lister(bucket, entry.key)
+            else:
+                found, entry_capped = session.list_file_keys(bucket, entry.key)
+            capped = capped or entry_capped
+            keys.extend(found)
+            marker = entry.key if entry.key.endswith("/") else f"{entry.key}/"
+            keys.append(marker)
+        else:
+            keys.append(entry.key)
+    unique: list[str] = []
+    seen: set[str] = set()
+    for key in keys:
+        if key and key not in seen:
+            seen.add(key)
+            unique.append(key)
+    return unique, capped
+
+
 def _files_for_entry(
     session: S3Session,
     bucket: str,
@@ -2105,6 +2239,50 @@ def _draw_upload(painter: QPainter) -> None:
     painter.drawLine(14, 40, 14, 54)
     painter.drawLine(14, 54, 50, 54)
     painter.drawLine(50, 54, 50, 40)
+
+
+def _draw_folder_outline(painter: QPainter, left: int, top: int, width: int, height: int) -> None:
+    tab = max(10, width // 3)
+    painter.drawLine(left, top + 8, left + tab, top + 8)
+    painter.drawLine(left + tab, top + 8, left + tab + 6, top + 14)
+    painter.drawLine(left + tab + 6, top + 14, left + width, top + 14)
+    painter.drawLine(left + width, top + 14, left + width, top + height)
+    painter.drawLine(left + width, top + height, left, top + height)
+    painter.drawLine(left, top + height, left, top + 8)
+
+
+def _draw_folder_upload(painter: QPainter) -> None:
+    pen = painter.pen()
+    pen.setWidth(4)
+    painter.setPen(pen)
+    _draw_folder_outline(painter, 4, 16, 34, 42)
+    painter.drawLine(48, 40, 48, 12)
+    painter.drawLine(40, 20, 48, 12)
+    painter.drawLine(56, 20, 48, 12)
+
+
+def _draw_folder_new(painter: QPainter) -> None:
+    pen = painter.pen()
+    pen.setWidth(4)
+    painter.setPen(pen)
+    _draw_folder_outline(painter, 4, 14, 36, 42)
+    painter.drawLine(40, 34, 58, 34)
+    painter.drawLine(49, 23, 49, 45)
+
+
+def _draw_trash(painter: QPainter) -> None:
+    pen = painter.pen()
+    pen.setWidth(4)
+    painter.setPen(pen)
+    painter.drawLine(14, 16, 50, 16)
+    painter.drawLine(26, 16, 28, 10)
+    painter.drawLine(28, 10, 36, 10)
+    painter.drawLine(36, 10, 38, 16)
+    painter.drawLine(18, 22, 22, 54)
+    painter.drawLine(22, 54, 42, 54)
+    painter.drawLine(42, 54, 46, 22)
+    painter.drawLine(28, 28, 30, 46)
+    painter.drawLine(36, 28, 34, 46)
 
 
 _MODE_ICONS: dict[bool, QIcon] = {}
