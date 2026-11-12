@@ -2,6 +2,17 @@
 
 # S3 Viewer
 
+Beta **0.1.0**. This software is in development.
+
+<p>
+  <img alt="Beta 0.1.0" src="https://img.shields.io/badge/beta-0.1.0-f59e0b?style=for-the-badge">
+  <img alt="In development" src="https://img.shields.io/badge/status-in%20development-eab308?style=for-the-badge">
+  <img alt="Linux, macOS, and Windows" src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-0f766e?style=for-the-badge">
+  <img alt="Python 3.12 or newer" src="https://img.shields.io/badge/Python-3.12%2B-3776AB?style=for-the-badge&logo=python&logoColor=white">
+  <img alt="German and English" src="https://img.shields.io/badge/languages-Deutsch%20%7C%20English-1f2937?style=for-the-badge">
+  <img alt="MIT license" src="https://img.shields.io/badge/license-MIT-16a34a?style=for-the-badge">
+</p>
+
 A desktop app for browsing OpenStack and other S3 buckets. Open files, change them, and move them between your machine and the bucket.
 
 <img src="misc/Forest%20segmentation%20storage%20and%20YAML%20preview.png" alt="Browsing a bucket and previewing a YAML file" width="100%">

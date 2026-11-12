@@ -389,6 +389,26 @@ def test_connection_error_is_shown_without_a_dialog(qtbot, tmp_path):
     assert window.session is None
 
 
+def test_language_button_keeps_its_place(qtbot, tmp_path):
+    window = MainWindow(session_factory=FakeSession, settings_path=str(tmp_path / "settings.ini"))
+    qtbot.addWidget(window)
+    window.show()
+    try:
+        expanded = window.header_layout.indexOf(window.language_button)
+        window.language_button.click()
+        assert window.language_button.text() == "EN"
+        assert window.header_layout.indexOf(window.language_button) == expanded
+
+        window._set_connection_collapsed(True)
+        collapsed = window.header_layout.indexOf(window.language_button)
+        assert collapsed > window.header_layout.indexOf(window.connect_button)
+        window.language_button.click()
+        assert window.language_button.text() == "DE"
+        assert window.header_layout.indexOf(window.language_button) == collapsed
+    finally:
+        set_language("de")
+
+
 def test_language_and_dark_mode_switch(qtbot, tmp_path):
     window = MainWindow(session_factory=FakeSession, settings_path=str(tmp_path / "settings.ini"))
     qtbot.addWidget(window)

@@ -42,6 +42,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from s3viewer import APP_TITLE
 from s3viewer.download import destination_for, relative_name, saved_message, unique_path
 from s3viewer.highlight import PreviewHighlighter, highlight_language
 from s3viewer.preview import (
@@ -269,7 +270,7 @@ class MainWindow(QMainWindow):
         self._transfer_total = 0
         self._transfer_peak = 0
 
-        self.setWindowTitle("S3 Viewer")
+        self.setWindowTitle(APP_TITLE)
         self.resize(1280, 800)
         self.setMinimumSize(980, 640)
         self._load_icons()
@@ -745,10 +746,10 @@ class MainWindow(QMainWindow):
         self._apply_connection_labels()
 
     def _detach_button(self, button: QPushButton) -> None:
-        parent = button.parentWidget()
-        if parent is None or parent.layout() is None:
-            return
-        parent.layout().removeWidget(button)
+        for layout in (self.header_layout, self.actions_layout):
+            if layout.indexOf(button) >= 0:
+                layout.removeWidget(button)
+                return
 
     def _apply_connection_labels(self) -> None:
         expanded = not self._connection_collapsed
@@ -1169,7 +1170,7 @@ class MainWindow(QMainWindow):
         self._clear_browser()
         self._set_banner(None)
         self._sync_buttons()
-        self.setWindowTitle("S3 Viewer")
+        self.setWindowTitle(APP_TITLE)
         self.statusBar().showMessage(tr("not_connected"))
 
     def _apply_connection(self, session: S3Session, connected: Connected) -> None:
@@ -1177,7 +1178,7 @@ class MainWindow(QMainWindow):
         buckets = sorted(connected.buckets, key=lambda bucket: bucket.name.casefold())
         self._fill_buckets(buckets)
         host = urlparse(session.settings.endpoint_url).netloc
-        self.setWindowTitle(f"S3 Viewer — {host}")
+        self.setWindowTitle(f"{APP_TITLE} — {host}")
         self._sync_buttons()
         if connected.notice:
             self.statusBar().showMessage(connected.notice)
