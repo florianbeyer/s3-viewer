@@ -97,6 +97,14 @@ QPushButton#iconButton:disabled {{
     background: {disabled_bg};
     color: {disabled};
 }}
+QPushButton#iconButton[connected="true"] {{
+    background: #bbf7d0;
+    color: #14532d;
+    border: 1px solid #4ade80;
+}}
+QPushButton#iconButton[connected="true"]:hover {{
+    background: #86efac;
+}}
 QPushButton#iconButton:checked {{
     background: #0f766e;
     border-color: #0f766e;

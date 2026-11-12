@@ -90,6 +90,7 @@ def test_browse_buckets_folders_and_preview_files(qtbot, tmp_path):
 
     qtbot.mouseClick(window.connect_button, Qt.MouseButton.LeftButton)
     qtbot.waitUntil(lambda: window.bucket_list.count() == 2, timeout=4000)
+    assert window.connect_button.property("connected") is True
     assert _bucket_names(window) == ["archiv", "projekt"]
 
     _click_bucket(qtbot, window, "projekt")
@@ -186,6 +187,14 @@ def test_several_files_can_be_selected_for_download(qtbot, tmp_path):
     assert window.new_folder_button.isEnabled() is True
     assert window.save_button.isEnabled() is False
     assert window.delete_button.isEnabled() is False
+
+    daten = _row_named(window, "daten")
+    window.object_table.scrollTo(window.object_table.model().index(daten, 0))
+    daten_rect = window.object_table.visualRect(window.object_table.model().index(daten, 0))
+    qtbot.mouseClick(window.object_table.viewport(), Qt.MouseButton.LeftButton, pos=daten_rect.center())
+    assert _object_names(window) == ["daten", "readme.txt"]
+    assert window.prefix == ""
+    assert window.delete_button.isEnabled() is True
 
     _select_rows(window, ["daten", "readme.txt"])
     assert {entry.name for entry in window._selected_entries()} == {"daten", "readme.txt"}
@@ -504,6 +513,9 @@ def _click_object(qtbot, window: MainWindow, name: str) -> None:
         if row.entry is not None and row.entry.name == name:
             window.object_table.scrollTo(window.object_table.model().index(index, 0))
             rect = window.object_table.visualRect(window.object_table.model().index(index, 0))
+            if row.entry.is_folder:
+                window.object_table.cellDoubleClicked.emit(index, 0)
+                return
             if rect.isValid() and not rect.isEmpty():
                 qtbot.mouseClick(window.object_table.viewport(), Qt.MouseButton.LeftButton, pos=rect.center())
             else:

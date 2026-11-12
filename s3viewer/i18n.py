@@ -139,8 +139,8 @@ STRINGS: dict[str, dict[str, str]] = {
     "col_size": {"de": "Größe", "en": "Size"},
     "col_modified": {"de": "Geändert", "en": "Modified"},
     "files_placeholder": {
-        "de": "Nach der Verbindung links einen Bucket wählen.\nOrdner öffnen sich per Klick. Textdateien, CSV, JSON, YAML und XML\nerscheinen in der Dateivorschau.",
-        "en": "After connecting, choose a bucket on the left.\nFolders open with a click. Text files, CSV, JSON, YAML and XML\nappear in the preview.",
+        "de": "Nach der Verbindung links einen Bucket wählen.\nOrdner öffnen sich per Doppelklick. Textdateien, CSV, JSON, YAML und XML\nerscheinen in der Dateivorschau.",
+        "en": "After connecting, choose a bucket on the left.\nFolders open with a double-click. Text files, CSV, JSON, YAML and XML\nappear in the preview.",
     },
     "preview_idle": {
         "de": "Wähle eine Textdatei, CSV, JSON, YAML oder XML aus.\nDer Inhalt erscheint hier.",
@@ -165,7 +165,7 @@ STRINGS: dict[str, dict[str, str]] = {
     "transfer_upload": {"de": "Upload", "en": "Upload"},
     "not_connected": {"de": "Nicht verbunden", "en": "Not connected"},
     "parent_folder": {"de": "Übergeordneter Ordner", "en": "Parent folder"},
-    "open_folder": {"de": "Klick öffnet den Ordner.", "en": "Click opens the folder."},
+    "open_folder": {"de": "Doppelklick öffnet den Ordner.", "en": "Double-click opens the folder."},
     "loading_preview": {"de": "Lade Vorschau…", "en": "Loading preview…"},
     "loading_folder": {"de": "Lade Ordner…", "en": "Loading folder…"},
     "folder_empty": {"de": "Dieser Ordner ist leer.", "en": "This folder is empty."},

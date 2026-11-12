@@ -511,7 +511,7 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.object_table.currentCellChanged.connect(self._on_current_cell)
         self.object_table.cellClicked.connect(self._on_cell_clicked)
-        self.object_table.cellDoubleClicked.connect(self._on_cell_clicked)
+        self.object_table.cellDoubleClicked.connect(self._on_cell_double_clicked)
 
         self.file_placeholder = QLabel(
             "Nach der Verbindung links einen Bucket wählen.\n"
@@ -1367,9 +1367,10 @@ class MainWindow(QMainWindow):
         self._activate(row, navigate=False)
 
     def _on_cell_clicked(self, row: int, _column: int) -> None:
-        modifiers = QApplication.keyboardModifiers()
-        extend = bool(modifiers & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier))
-        self._activate(row, navigate=not extend)
+        self._activate(row, navigate=False)
+
+    def _on_cell_double_clicked(self, row: int, _column: int) -> None:
+        self._activate(row, navigate=True)
 
     def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt-API
         if watched is self.object_table and event.type() == QEvent.Type.KeyPress:
@@ -2008,6 +2009,7 @@ class MainWindow(QMainWindow):
         connected = self.session is not None
         self.connect_button.setEnabled(not self._connecting)
         self.connect_button.setToolTip(tr("connecting") if self._connecting else tr("connect"))
+        self._set_connect_connected(connected)
         self._apply_connection_labels()
         self.disconnect_button.setEnabled(connected and not self._connecting)
         self.up_button.setEnabled(connected and bool(self.prefix))
@@ -2020,6 +2022,14 @@ class MainWindow(QMainWindow):
         self.new_folder_button.setEnabled(connected and bool(self.bucket_name))
         file_selected = self._current_entry is not None and not self._current_entry.is_folder
         self.download_button.setEnabled(file_selected)
+
+    def _set_connect_connected(self, connected: bool) -> None:
+        button = self.connect_button
+        if button.property("connected") is connected:
+            return
+        button.setProperty("connected", connected)
+        button.style().unpolish(button)
+        button.style().polish(button)
 
     def _begin_transfer(self, total: int, *, kind: str) -> None:
         self._transfer_kind = kind
