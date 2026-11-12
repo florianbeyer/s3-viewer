@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=S3 Viewer
+GenericName=S3 Viewer
+Comment=OpenStack- und S3-Buckets durchsehen
+Exec=/media/data2/KI-Team/git-projects/s3-viewer/start.sh
+Path=/media/data2/KI-Team/git-projects/s3-viewer
+Icon=folder-remote
+Terminal=false
+Categories=Utility;
+StartupNotify=true
+StartupWMClass=s3-viewer

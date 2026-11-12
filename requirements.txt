@@ -1,0 +1,5 @@
+Pillow>=10.4.0
+tifffile>=2024.8.10
+imagecodecs>=2024.6.1
+PySide6-Essentials>=6.6.3
+boto3>=1.36.0
