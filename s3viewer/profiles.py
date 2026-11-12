@@ -1,16 +1,54 @@
-"""Benannte Verbindungen im Home-Verzeichnis unter .s3-viewer."""
+"""Benannte Verbindungen im üblichen, versteckten Konfigurationsordner des Systems."""
 
 from __future__ import annotations
 
 import json
 import os
+import shutil
+import sys
 from pathlib import Path
 
 from s3viewer.i18n import tr
 from s3viewer.s3 import ConnectionSettings
 
+
+def platform_config_dir() -> Path:
+    """Hidden, OS-typical folder for settings and saved credentials."""
+    if sys.platform == "win32":
+        appdata = os.environ.get("APPDATA")
+        base = Path(appdata) if appdata else Path.home() / "AppData" / "Roaming"
+        return base / "s3-viewer"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "s3-viewer"
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    base = Path(xdg) if xdg else Path.home() / ".config"
+    return base / "s3-viewer"
+
+
+def config_dir_display() -> str:
+    if sys.platform == "win32":
+        return r"%AppData%\s3-viewer"
+    if sys.platform == "darwin":
+        return "~/Library/Application Support/s3-viewer"
+    if os.environ.get("XDG_CONFIG_HOME"):
+        return str(platform_config_dir())
+    return "~/.config/s3-viewer"
+
+
 def default_profiles_root() -> Path:
-    return Path.home() / ".s3-viewer"
+    dest = platform_config_dir()
+    _import_legacy_connections(dest)
+    return dest
+
+
+def settings_ini_path() -> Path:
+    dest = platform_config_dir() / "settings.ini"
+    if not dest.exists():
+        legacy = Path.home() / ".config" / "s3viewer" / "S3Viewer.conf"
+        if legacy.is_file():
+            _ensure_private(dest.parent)
+            shutil.copy2(legacy, dest)
+    return dest
 
 
 def list_profile_names(root: Path) -> list[str]:
@@ -71,6 +109,30 @@ def normalize_profile_name(name: str) -> str:
     return cleaned
 
 
+def _import_legacy_connections(dest: Path) -> None:
+    target = dest / "connections.json"
+    if target.exists():
+        return
+    legacy = Path.home() / ".s3-viewer" / "connections.json"
+    if not legacy.is_file() or legacy.resolve() == target.resolve():
+        return
+    _ensure_private(dest)
+    shutil.copy2(legacy, target)
+    _chmod(target, 0o600)
+
+
+def _ensure_private(directory: Path) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    _chmod(directory, 0o700)
+
+
+def _chmod(path: Path, mode: int) -> None:
+    try:
+        os.chmod(path, mode)
+    except OSError:
+        return
+
+
 def _store_path(root: Path) -> Path:
     return root / "connections.json"
 
@@ -90,8 +152,7 @@ def _read(root: Path) -> dict[str, dict]:
 
 
 def _write(root: Path, profiles: dict[str, dict]) -> None:
-    root.mkdir(parents=True, exist_ok=True)
-    os.chmod(root, 0o700)
+    _ensure_private(root)
     target = _store_path(root)
     temporary = root / "connections.json.tmp"
     payload = json.dumps({"version": 1, "profiles": profiles}, indent=2, ensure_ascii=False)
@@ -105,4 +166,4 @@ def _write(root: Path, profiles: dict[str, dict]) -> None:
         if temporary.exists():
             temporary.unlink()
         raise
-    os.chmod(target, 0o600)
+    _chmod(target, 0o600)

@@ -68,8 +68,8 @@ STRINGS: dict[str, dict[str, str]] = {
     "transfer_delete": {"de": "Löschen", "en": "Delete"},
     "save_profile": {"de": "Speichern", "en": "Save"},
     "save_profile_tip": {
-        "de": "Endpunkt und Zugangsdaten unter einem Namen in ~/.s3-viewer speichern",
-        "en": "Save endpoint and credentials under a name in ~/.s3-viewer",
+        "de": "Endpunkt und Zugangsdaten unter einem Namen in {path} speichern",
+        "en": "Save endpoint and credentials under a name in {path}",
     },
     "delete_profile": {"de": "Entfernen", "en": "Remove"},
     "delete_profile_tip": {
@@ -132,8 +132,8 @@ STRINGS: dict[str, dict[str, str]] = {
     },
     "saved_connection": {"de": "Gespeicherte Verbindung", "en": "Saved connection"},
     "profile_tip": {
-        "de": "Gespeicherte Verbindung aus ~/.s3-viewer laden",
-        "en": "Load a saved connection from ~/.s3-viewer",
+        "de": "Gespeicherte Verbindung aus {path} laden",
+        "en": "Load a saved connection from {path}",
     },
     "col_name": {"de": "Name", "en": "Name"},
     "col_size": {"de": "Größe", "en": "Size"},
@@ -217,7 +217,10 @@ STRINGS: dict[str, dict[str, str]] = {
     },
     "saved_connection_status": {"de": "Verbindung gespeichert in {path}", "en": "Connection saved in {path}"},
     "remove_connection_title": {"de": "Verbindung entfernen", "en": "Remove connection"},
-    "remove_connection_body": {"de": "„{name}“ aus ~/.s3-viewer entfernen?", "en": "Remove “{name}” from ~/.s3-viewer?"},
+    "remove_connection_body": {
+        "de": "„{name}“ aus {path} entfernen?",
+        "en": "Remove “{name}” from {path}?",
+    },
     "removed_connection": {"de": "„{name}“ entfernt", "en": "Removed “{name}”"},
     "summary_empty": {"de": "Endpunkt und Zugangsdaten", "en": "Endpoint and credentials"},
     "fallback_profile": {"de": "Verbindung", "en": "Connection"},

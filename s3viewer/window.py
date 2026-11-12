@@ -52,12 +52,14 @@ from s3viewer.preview import (
     content_type_for_save,
 )
 from s3viewer.profiles import (
+    config_dir_display,
     default_profiles_root,
     delete_profile,
     list_profile_names,
     load_profile,
     normalize_profile_name,
     save_profile,
+    settings_ini_path,
 )
 from s3viewer.tiffpreview import TIFF_PREVIEW_BYTE_LIMIT, is_tiff
 from s3viewer.upload import (
@@ -339,7 +341,7 @@ class MainWindow(QMainWindow):
         for button in self.findChildren(QPushButton):
             key = button.property("i18n")
             if key:
-                button.setToolTip(tr(str(key)))
+                button.setToolTip(tr(str(key), path=config_dir_display()))
         self._sync_dark_button()
         self.bucket_heading.setText(tr("buckets"))
         if not self.bucket_name:
@@ -389,7 +391,7 @@ class MainWindow(QMainWindow):
         self.verify_tls.setText(tr("verify_tls"))
         self.verify_tls.setToolTip(tr("verify_tip"))
         self.hint.setText(tr("hint"))
-        self.profile_combo.setToolTip(tr("profile_tip"))
+        self.profile_combo.setToolTip(tr("profile_tip", path=config_dir_display()))
         if self.profile_combo.count() and self.profile_combo.itemData(0) in {"", None}:
             self.profile_combo.setItemText(0, tr("saved_connection"))
         self.object_table.setHorizontalHeaderLabels([tr("col_name"), tr("col_size"), tr("col_modified")])
@@ -596,7 +598,7 @@ class MainWindow(QMainWindow):
         self.profile_combo = QComboBox()
         self.profile_combo.setObjectName("profileCombo")
         self.profile_combo.setMinimumWidth(220)
-        self.profile_combo.setToolTip("Gespeicherte Verbindung aus ~/.s3-viewer laden")
+        self.profile_combo.setToolTip("Gespeicherte Verbindung laden")
         self.profile_combo.currentIndexChanged.connect(self._on_profile_selected)
         self.save_profile_button = self._icon_button("document-save-as", QStyle.StandardPixmap.SP_DialogSaveButton, "save_profile_tip")
         self.save_profile_button.clicked.connect(self._save_named_profile)
@@ -881,7 +883,7 @@ class MainWindow(QMainWindow):
         answer = QMessageBox.question(
             self,
             tr("remove_connection_title"),
-            tr("remove_connection_body", name=name),
+            tr("remove_connection_body", name=name, path=config_dir_display()),
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
@@ -1007,7 +1009,7 @@ class MainWindow(QMainWindow):
     def _qsettings(self) -> QSettings:
         if self._settings_path:
             return QSettings(self._settings_path, QSettings.Format.IniFormat)
-        return QSettings("s3viewer", "S3Viewer")
+        return QSettings(str(settings_ini_path()), QSettings.Format.IniFormat)
 
     def _restore_settings(self) -> None:
         settings = self._qsettings()

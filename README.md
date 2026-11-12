@@ -17,10 +17,38 @@ A desktop app for browsing OpenStack and other S3 buckets. Open files, change th
 - ⬆️⬇️🗑️ Upload, download, and delete files and folders
 - 🌙☀️ Light and dark mode
 
-## Start
+## Run it
+
+Python 3.12 or newer is required. The first launch creates a virtual environment in `.venv` and installs the dependencies.
+
+### Linux
 
 ```bash
 ./start.sh
 ```
 
-The first launch creates a virtual environment and installs the dependencies. You can also start it from the application menu or by double-clicking `S3 Viewer.desktop`.
+You can also start it from the application menu, or double-click `S3 Viewer.desktop`, after that file points at this folder.
+
+### macOS
+
+Double-click `start.command`. Terminal opens and starts the app. Or, in Terminal:
+
+```bash
+./start.command
+```
+
+### Windows
+
+Double-click `start.bat`. The first run installs the dependencies in a console window, then the app opens without a console.
+
+## Where connections are stored
+
+Saved connections, including the secret key, and the last connection form are kept outside the repository:
+
+| System | Folder |
+| --- | --- |
+| Linux | `~/.config/s3-viewer/` |
+| macOS | `~/Library/Application Support/s3-viewer/` |
+| Windows | `%AppData%\s3-viewer\` |
+
+`connections.json` holds named connections and credentials. `settings.ini` remembers the endpoint, access key, region, and window options. The secret key is written only when you save a named connection. An older Linux store in `~/.s3-viewer` is copied over once.

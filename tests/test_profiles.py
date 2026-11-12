@@ -27,6 +27,51 @@ def test_profile_is_stored_under_s3_viewer_with_private_permissions(tmp_path: Pa
     assert list_profile_names(root) == []
 
 
+def test_config_dir_follows_the_operating_system(monkeypatch, tmp_path: Path):
+    from s3viewer import profiles
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(profiles.Path, "home", lambda: home)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.delenv("APPDATA", raising=False)
+
+    monkeypatch.setattr(profiles.sys, "platform", "linux")
+    assert profiles.platform_config_dir() == home / ".config" / "s3-viewer"
+    assert profiles.config_dir_display() == "~/.config/s3-viewer"
+
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
+    assert profiles.platform_config_dir() == tmp_path / "xdg" / "s3-viewer"
+
+    monkeypatch.setattr(profiles.sys, "platform", "darwin")
+    assert profiles.platform_config_dir() == home / "Library" / "Application Support" / "s3-viewer"
+    assert profiles.config_dir_display() == "~/Library/Application Support/s3-viewer"
+
+    monkeypatch.setattr(profiles.sys, "platform", "win32")
+    monkeypatch.setenv("APPDATA", str(tmp_path / "AppData" / "Roaming"))
+    assert profiles.platform_config_dir() == tmp_path / "AppData" / "Roaming" / "s3-viewer"
+    assert profiles.config_dir_display() == "%AppData%\\s3-viewer"
+
+
+def test_legacy_home_store_is_copied_once(monkeypatch, tmp_path: Path):
+    from s3viewer import profiles
+
+    home = tmp_path / "home"
+    legacy = home / ".s3-viewer"
+    legacy.mkdir(parents=True)
+    (legacy / "connections.json").write_text('{"version": 1, "profiles": {}}\n', encoding="utf-8")
+    monkeypatch.setattr(profiles.Path, "home", lambda: home)
+    monkeypatch.setattr(profiles.sys, "platform", "linux")
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+
+    first = profiles.default_profiles_root()
+    assert first == home / ".config" / "s3-viewer"
+    assert (first / "connections.json").read_text(encoding="utf-8").startswith("{")
+    (first / "connections.json").write_text('{"version": 1, "profiles": {"kept": {}}}\n', encoding="utf-8")
+    assert profiles.default_profiles_root() == first
+    assert "kept" in (first / "connections.json").read_text(encoding="utf-8")
+
+
 def test_profile_name_rejects_slashes(tmp_path: Path):
     with pytest.raises(ValueError):
         save_profile(tmp_path, "a/b", _settings())
