@@ -566,6 +566,14 @@ class S3Session:
 
         self._call(run)
 
+    def copy_key(self, source_bucket: str, source_key: str, dest_bucket: str, dest_key: str) -> None:
+        source = {"Bucket": source_bucket, "Key": source_key}
+
+        def run() -> None:
+            self._client.copy(source, dest_bucket, dest_key)
+
+        self._call(run)
+
     def put_text(self, bucket: str, key: str, data: bytes, content_type: str) -> None:
         def run() -> None:
             self._client.put_object(Bucket=bucket, Key=key, Body=data, ContentType=content_type)

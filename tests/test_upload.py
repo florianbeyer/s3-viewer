@@ -100,6 +100,21 @@ def test_create_folder_puts_an_empty_marker():
     assert saved["Body"] == b""
 
 
+def test_copy_key_sends_bucket_and_key():
+    calls: list[tuple] = []
+
+    class Client:
+        def copy(self, source, bucket, key):
+            calls.append((source, bucket, key))
+
+    session = S3Session(
+        ConnectionSettings(endpoint_url="https://s3.example.com", access_key="ak", secret_key="sk"),
+        client=Client(),
+    )
+    session.copy_key("projekt", "a b.txt", "projekt", "ordner/a b.txt")
+    assert calls == [({"Bucket": "projekt", "Key": "a b.txt"}, "projekt", "ordner/a b.txt")]
+
+
 def test_folder_upload_keeps_subfolders(tmp_path: Path):
     root = tmp_path / "stapel"
     nested = root / "2020"

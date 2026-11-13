@@ -252,6 +252,47 @@ def test_selected_files_and_folders_can_be_deleted(qtbot, tmp_path, monkeypatch)
     assert set(keys) == {"daten/tabelle.csv", "daten/leer/", "daten/", "readme.txt"}
 
 
+def test_right_click_can_copy_path_name_and_paste(qtbot, tmp_path):
+    from PySide6.QtWidgets import QApplication
+
+    class Session(FakeSession):
+        def list_object_keys(self, bucket, prefix):
+            return [f"{prefix}a.txt"], False
+
+        def copy_key(self, source_bucket, source_key, dest_bucket, dest_key):
+            self.copied.append((source_bucket, source_key, dest_bucket, dest_key))
+
+        def __init__(self, settings=None):
+            super().__init__(settings)
+            self.copied = []
+
+    window = MainWindow(session_factory=Session, settings_path=str(tmp_path / "settings.ini"))
+    qtbot.addWidget(window)
+    window.show()
+    window.endpoint.setText("https://s3.example.com")
+    window.access_key.setText("ak")
+    window.secret_key.setText("sk")
+    qtbot.mouseClick(window.connect_button, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(lambda: window.bucket_list.count() == 2, timeout=4000)
+    _click_bucket(qtbot, window, "projekt")
+    qtbot.waitUntil(lambda: "readme.txt" in _object_names(window), timeout=4000)
+    _select_rows(window, ["readme.txt", "daten"])
+
+    window._copy_paths()
+    assert QApplication.clipboard().text() == "projekt/readme.txt\nprojekt/daten/"
+    window._copy_names()
+    assert QApplication.clipboard().text() == "readme.txt\ndaten"
+    window._copy_files()
+    window.prefix = "archiv/"
+    window._paste_files()
+    qtbot.waitUntil(lambda: len(window.session.copied) == 3, timeout=4000)
+    assert set(window.session.copied) == {
+        ("projekt", "readme.txt", "projekt", "archiv/readme.txt"),
+        ("projekt", "daten/a.txt", "projekt", "archiv/daten/a.txt"),
+        ("projekt", "daten/", "projekt", "archiv/daten/"),
+    }
+
+
 def test_tiff_file_shows_a_coarse_preview(qtbot, tmp_path):
     import io
 

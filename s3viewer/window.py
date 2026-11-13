@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QProgressBar,
@@ -43,7 +44,7 @@ from PySide6.QtWidgets import (
 )
 
 from s3viewer import APP_TITLE
-from s3viewer.download import destination_for, relative_name, saved_message, unique_path
+from s3viewer.clipboard import CopiedObject, paste_pairs
 from s3viewer.highlight import PreviewHighlighter, highlight_language
 from s3viewer.preview import (
     EDITABLE_KINDS,
@@ -266,6 +267,7 @@ class MainWindow(QMainWindow):
         self._transfer_active = False
         self._transfer_kind = ""
         self._download_cancel: CancelFlag | None = None
+        self._file_clipboard: list[CopiedObject] = []
         self._transfer_done = 0
         self._transfer_total = 0
         self._transfer_peak = 0
@@ -366,6 +368,8 @@ class MainWindow(QMainWindow):
                 if self._transfer_kind == "download"
                 else tr("transfer_delete")
                 if self._transfer_kind == "delete"
+                else tr("transfer_copy")
+                if self._transfer_kind == "copy"
                 else tr("transfer_upload")
             )
         self.bucket_filter.setPlaceholderText(tr("filter_buckets"))
@@ -505,6 +509,8 @@ class MainWindow(QMainWindow):
         self.object_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.object_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.object_table.setTextElideMode(Qt.TextElideMode.ElideMiddle)
+        self.object_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.object_table.customContextMenuRequested.connect(self._show_file_menu)
         self.object_table.installEventFilter(self)
         self.object_table.itemSelectionChanged.connect(self._sync_buttons)
         header = self.object_table.horizontalHeader()
@@ -1380,6 +1386,15 @@ class MainWindow(QMainWindow):
             if event.matches(QKeySequence.StandardKey.SelectAll):
                 self._select_visible_rows()
                 return True
+            if event.matches(QKeySequence.StandardKey.Copy):
+                self._copy_files()
+                return True
+            if event.matches(QKeySequence.StandardKey.Paste):
+                self._paste_files()
+                return True
+            if event.key() == Qt.Key.Key_Delete:
+                self._delete_selected()
+                return True
         return super().eventFilter(watched, event)
 
     def _select_visible_rows(self) -> None:
@@ -1719,6 +1734,107 @@ class MainWindow(QMainWindow):
 
         self._submit("delete", work, done, self._set_banner, track_transfer=True)
 
+    def _show_file_menu(self, pos) -> None:
+        index = self.object_table.indexAt(pos)
+        if index.isValid():
+            selected = {item.row() for item in self.object_table.selectionModel().selectedRows()}
+            if index.row() not in selected:
+                self.object_table.selectRow(index.row())
+        entries = self._selected_entries()
+        menu = QMenu(self)
+        copy_path = menu.addAction(tr("copy_path"))
+        copy_name = menu.addAction(tr("copy_name"))
+        menu.addSeparator()
+        copy_files = menu.addAction(tr("copy_files"))
+        paste_files = menu.addAction(tr("paste_files"))
+        menu.addSeparator()
+        delete_files = menu.addAction(tr("delete"))
+        has_entries = bool(entries)
+        copy_path.setEnabled(has_entries)
+        copy_name.setEnabled(has_entries)
+        copy_files.setEnabled(has_entries)
+        paste_files.setEnabled(bool(self._file_clipboard) and self.session is not None and bool(self.bucket_name))
+        delete_files.setEnabled(has_entries)
+        chosen = menu.exec(self.object_table.viewport().mapToGlobal(pos))
+        if chosen is copy_path:
+            self._copy_paths()
+        elif chosen is copy_name:
+            self._copy_names()
+        elif chosen is copy_files:
+            self._copy_files()
+        elif chosen is paste_files:
+            self._paste_files()
+        elif chosen is delete_files:
+            self._delete_selected()
+
+    def _copy_paths(self) -> None:
+        entries = self._selected_entries()
+        if not entries or not self.bucket_name:
+            return
+        QApplication.clipboard().setText("\n".join(f"{self.bucket_name}/{entry.key}" for entry in entries))
+        self.statusBar().showMessage(tr("copied_path"))
+
+    def _copy_names(self) -> None:
+        entries = self._selected_entries()
+        if not entries:
+            return
+        QApplication.clipboard().setText("\n".join(entry.name for entry in entries))
+        self.statusBar().showMessage(tr("copied_name"))
+
+    def _copy_files(self) -> None:
+        entries = self._selected_entries()
+        if not entries or not self.bucket_name:
+            return
+        self._file_clipboard = [
+            CopiedObject(bucket=self.bucket_name, key=entry.key, name=entry.name, is_folder=entry.is_folder)
+            for entry in entries
+        ]
+        count = len(self._file_clipboard)
+        message = tr("copied_files_one") if count == 1 else tr("copied_files_many", count=count)
+        self.statusBar().showMessage(message)
+
+    def _paste_files(self) -> None:
+        if self.session is None or not self.bucket_name or not self._file_clipboard:
+            return
+        session = self.session
+        bucket = self.bucket_name
+        folder = self.prefix
+        items = list(self._file_clipboard)
+
+        def work() -> int:
+            pairs: list[tuple[str, str, str]] = []
+            for item in items:
+                nested: list[str] = []
+                if item.is_folder:
+                    nested, _capped = session.list_object_keys(item.bucket, item.key)
+                pairs.extend(paste_pairs(item, folder, nested))
+            copied = 0
+            self._transfer_signals.planned.emit(max(len(pairs), 1))
+            for source_bucket, source_key, dest_key in pairs:
+                if source_bucket == bucket and source_key == dest_key:
+                    continue
+                session.copy_key(source_bucket, source_key, bucket, dest_key)
+                copied += 1
+                self._transfer_signals.advanced.emit(1)
+            return copied
+
+        def done(count: object) -> None:
+            self._set_banner(None)
+            amount = int(count)  # type: ignore[arg-type]
+            if amount == 0:
+                self.statusBar().showMessage(tr("paste_same"))
+            elif amount == 1:
+                self.statusBar().showMessage(tr("pasted_one"))
+            else:
+                self.statusBar().showMessage(tr("pasted_many", count=amount))
+            if self.session is not None and self.bucket_name == bucket and self.prefix == folder:
+                self._nav_guard_until = 0
+                self._open_prefix(folder)
+
+        self._download_cancel = None
+        self._begin_transfer(0, kind="copy")
+        self._submit("paste", work, done, self._set_banner, track_transfer=True)
+
     def _selected_entries(self) -> list[ObjectEntry]:
         selected: list[ObjectEntry] = []
         seen: set[str] = set()
@@ -2045,6 +2161,8 @@ class MainWindow(QMainWindow):
             if kind == "download"
             else tr("transfer_delete")
             if kind == "delete"
+            else tr("transfer_copy")
+            if kind == "copy"
             else tr("transfer_upload")
         )
         self.cancel_download_button.setVisible(kind == "download")
