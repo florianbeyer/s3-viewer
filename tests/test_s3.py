@@ -194,3 +194,33 @@ def _settings() -> ConnectionSettings:
         access_key="ak",
         secret_key="sk",
     )
+
+
+def test_read_range_uses_a_byte_range():
+    class Client:
+        def __init__(self):
+            self.ranges = []
+
+        def head_object(self, **_kwargs):
+            return {"ContentLength": 10, "ContentType": "image/tiff"}
+
+        def get_object(self, **kwargs):
+            self.ranges.append(kwargs.get("Range"))
+
+            class Body:
+                def read(self, count):
+                    return b"abc"[:count]
+
+                def close(self):
+                    return None
+
+            return {"Body": Body(), "ContentType": "image/tiff", "ContentLength": 3}
+
+        def close(self):
+            return None
+
+    client = Client()
+    session = S3Session(_settings(), client=client)
+    assert session.object_info("bucket", "karte.tif") == (10, "image/tiff")
+    assert session.read_range("bucket", "karte.tif", 4, 3) == b"abc"
+    assert client.ranges == ["bytes=4-6"]

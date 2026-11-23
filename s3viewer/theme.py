@@ -201,6 +201,9 @@ QListWidget::item {{
     padding: 7px 8px;
     border-radius: 6px;
 }}
+QListWidget#buckets::item {{
+    padding: 7px 34px 7px 8px;
+}}
 QListWidget::item:selected, QTableWidget::item:selected {{
     background: {selection};
     color: {selection_text};

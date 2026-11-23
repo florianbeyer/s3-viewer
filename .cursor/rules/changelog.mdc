@@ -1,0 +1,31 @@
+---
+description: Update CHANGELOG.md when the user says the version has increased
+alwaysApply: true
+---
+
+# Version changelog
+
+When the user says the version has increased (for example „die Version ist gestiegen“, „neue Version“, or a named number such as 0.2.0):
+
+1. Use the version they name. If they do not name one, ask for it before editing.
+2. Set that version in `s3viewer/__init__.py` (`__version__`) and in the README beta line and version badge.
+3. In `CHANGELOG.md`, add `## [version] - YYYY-MM-DD` (today) directly under `## [Unreleased]`.
+4. Fill that section from real changes since the previous version heading: the Unreleased notes, commits, and the diff. User-facing changes only, in English, grouped as Added, Changed, or Fixed.
+5. Leave `## [Unreleased]` in place with empty Added, Changed, and Fixed subsections.
+6. Do not commit unless the user asks.
+
+```markdown
+## [Unreleased]
+
+### Added
+
+### Changed
+
+### Fixed
+
+## [0.2.0] - 2026-12-01
+
+### Added
+
+- Copy a bucket name from the list.
+```

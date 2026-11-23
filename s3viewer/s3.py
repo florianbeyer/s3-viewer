@@ -467,6 +467,26 @@ class S3Session:
             truncated=truncated,
         )
 
+    def object_info(self, bucket: str, key: str) -> tuple[int | None, str]:
+        meta = self._head(bucket, key)
+        if not meta:
+            return None, ""
+        length = meta.get("ContentLength")
+        size = int(length) if length is not None else None
+        return size, str(meta.get("ContentType") or "")
+
+    def read_range(self, bucket: str, key: str, start: int, length: int) -> bytes:
+        if length <= 0:
+            return b""
+        end = max(start, start + length - 1)
+        data, _content_type, _content_range, _length = self._get_bytes(
+            bucket,
+            key,
+            length,
+            f"bytes={start}-{end}",
+        )
+        return data
+
     def _get_bytes(
         self,
         bucket: str,

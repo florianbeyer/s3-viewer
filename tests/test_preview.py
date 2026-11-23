@@ -39,11 +39,34 @@ def test_plain_text_and_empty_file():
     assert empty.kind == "empty"
 
 
-def test_png_is_not_shown_as_text():
-    data = b"\x89PNG\r\n\x1a\n" + b"\x00" * 8
-    preview = build_preview("bild.png", data, content_type="image/png")
-    assert preview.kind == "binary"
+def test_png_and_jpeg_are_shown_as_images():
+    import io
+
+    from PIL import Image
+
+    png = io.BytesIO()
+    Image.new("RGB", (40, 20), (20, 90, 160)).save(png, format="PNG")
+    preview = build_preview("bild.png", png.getvalue(), content_type="image/png")
+    assert preview.kind == "image"
+    assert preview.image.startswith(b"\x89PNG\r\n\x1a\n")
     assert preview.text == ""
+
+    jpeg = io.BytesIO()
+    Image.new("RGB", (1800, 20), (200, 40, 40)).save(jpeg, format="JPEG")
+    preview = build_preview("foto.jpg", jpeg.getvalue(), content_type="image/jpeg")
+    assert preview.kind == "image"
+    assert "1800×20" in preview.notice
+    with Image.open(io.BytesIO(preview.image)) as image:
+        assert image.width <= 1600
+        assert image.width > image.height
+
+
+def test_broken_png_is_not_shown_as_text():
+    preview = build_preview("bild.png", b"\x89PNG\r\n\x1a\n" + b"\x00" * 8, content_type="image/png")
+    assert preview.kind == "image"
+    assert preview.image == b""
+    assert preview.text == ""
+    assert "heruntergeladen" in preview.notice
 
 
 def test_save_content_type_keeps_json_and_adds_charset():

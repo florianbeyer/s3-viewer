@@ -37,8 +37,11 @@ from PySide6.QtWidgets import (
     QSplitter,
     QStackedWidget,
     QStyle,
+    QStyledItemDelegate,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -48,10 +51,12 @@ from s3viewer.clipboard import CopiedObject, paste_pairs
 from s3viewer.highlight import PreviewHighlighter, highlight_language
 from s3viewer.preview import (
     EDITABLE_KINDS,
+    IMAGE_PREVIEW_BYTE_LIMIT,
     PREVIEW_BYTE_LIMIT,
     Preview,
     build_preview,
     content_type_for_save,
+    is_image,
 )
 from s3viewer.profiles import (
     config_dir_display,
@@ -63,7 +68,17 @@ from s3viewer.profiles import (
     save_profile,
     settings_ini_path,
 )
-from s3viewer.tiffpreview import TIFF_PREVIEW_BYTE_LIMIT, is_tiff
+from s3viewer.tiffpreview import (
+    TIFF_PREVIEW_BYTE_LIMIT,
+    RangeReader,
+    build_tiff_from_source,
+    colorbar_png,
+    is_tiff,
+    random_palette,
+    render_styled,
+    style_notice,
+    tiff_detail_rows,
+)
 from s3viewer.upload import (
     colliding_keys,
     folder_marker_key,
@@ -297,6 +312,7 @@ class MainWindow(QMainWindow):
         self.icon_bucket = QIcon.fromTheme("folder-remote")
         if self.icon_bucket.isNull():
             self.icon_bucket = style.standardIcon(QStyle.StandardPixmap.SP_DriveNetIcon)
+        self.bucket_copy_icon = _themed_icon(_draw_copy, QColor("#1f2933"), QColor("#94a3b8"))
         window_icon = self.icon_bucket
         self.setWindowIcon(window_icon)
 
@@ -322,6 +338,10 @@ class MainWindow(QMainWindow):
         self.upload_folder_button.setIcon(_themed_icon(_draw_folder_upload, color, muted))
         self.new_folder_button.setIcon(_themed_icon(_draw_folder_new, color, muted))
         self.delete_button.setIcon(_themed_icon(_draw_trash, color, muted))
+        self.bucket_copy_icon = _themed_icon(_draw_copy, color, muted)
+        self.copy_endpoint_button.setIcon(self.bucket_copy_icon)
+        if hasattr(self, "bucket_list"):
+            self.bucket_list.viewport().update()
         self._sync_dark_button()
 
     def _sync_dark_button(self) -> None:
@@ -405,6 +425,7 @@ class MainWindow(QMainWindow):
         self._toggle_secret(self.reveal_button.isChecked())
         self._set_connection_collapsed(self._connection_collapsed)
         self._sync_buttons()
+        self._retranslate_tiff()
 
     def _build_ui(self) -> None:
         root = QWidget()
@@ -422,7 +443,12 @@ class MainWindow(QMainWindow):
         self._reload_profiles()
 
         self.bucket_list = QListWidget()
+        self.bucket_list.setObjectName("buckets")
         self.bucket_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.bucket_list.setMouseTracking(True)
+        self.bucket_list.viewport().setMouseTracking(True)
+        self.bucket_list.setItemDelegate(_BucketCopyDelegate(lambda: self.bucket_copy_icon, self.bucket_list))
+        self.bucket_list.viewport().installEventFilter(self)
         self.bucket_list.itemClicked.connect(self._on_bucket_clicked)
         self.bucket_count = QLabel("")
         self.bucket_count.setObjectName("muted")
@@ -657,6 +683,13 @@ class MainWindow(QMainWindow):
         self.endpoint = QLineEdit()
         self.endpoint.setPlaceholderText("https://s3.cloud.example.com")
         self.endpoint.setToolTip("S3-API-Adresse der OpenStack-Umgebung, inklusive https://")
+        self.copy_endpoint_button = self._icon_button(
+            "edit-copy",
+            QStyle.StandardPixmap.SP_FileDialogContentsView,
+            "copy_endpoint",
+        )
+        self.copy_endpoint_button.setIcon(self.bucket_copy_icon)
+        self.copy_endpoint_button.clicked.connect(self._copy_endpoint)
         self.region = QComboBox()
         self.region.setObjectName("region")
         self.region.setEditable(True)
@@ -703,8 +736,13 @@ class MainWindow(QMainWindow):
         self.label_secret = QLabel("Geheimer Schlüssel")
         self.label_bucket = QLabel("Bucket")
         self.label_signature = QLabel("Signatur")
+        endpoint_line = QHBoxLayout()
+        endpoint_line.setContentsMargins(0, 0, 0, 0)
+        endpoint_line.setSpacing(6)
+        endpoint_line.addWidget(self.endpoint, 1)
+        endpoint_line.addWidget(self.copy_endpoint_button)
         grid.addWidget(self.label_endpoint, 0, 0)
-        grid.addWidget(self.endpoint, 0, 1, 1, 3)
+        grid.addLayout(endpoint_line, 0, 1, 1, 3)
         grid.addWidget(self.label_region, 0, 4)
         grid.addWidget(self.region, 0, 5)
         grid.addWidget(self.label_access, 1, 0)
@@ -974,6 +1012,7 @@ class MainWindow(QMainWindow):
         image_layout.addWidget(self.preview_image)
         self.preview_stack.addWidget(self.preview_image_page)
         self.preview_stack.setCurrentWidget(self.preview_message_page)
+        self._build_tiff_panel()
 
         buttons = QHBoxLayout()
         self.copy_button = self._icon_button("edit-copy", QStyle.StandardPixmap.SP_FileDialogContentsView, "copy")
@@ -992,11 +1031,282 @@ class MainWindow(QMainWindow):
         layout.addLayout(header)
         layout.addWidget(self.preview_meta)
         layout.addWidget(self.preview_notice)
+        layout.addWidget(self.tiff_panel)
         layout.addWidget(self.preview_stack, 1)
         layout.addLayout(buttons)
         self.preview_dock.setWidget(body)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.preview_dock)
         self.preview_dock.setMinimumWidth(340)
+
+    def _build_tiff_panel(self) -> None:
+        self._tiff_array = None
+        self._tiff_info = {}
+        self._tiff_nodata = ""
+        self._tiff_palette_id = "viridis"
+        self._tiff_updating = False
+        self.tiff_panel = QWidget()
+        self.tiff_panel.setObjectName("tiffPanel")
+        panel = QVBoxLayout(self.tiff_panel)
+        panel.setContentsMargins(0, 0, 0, 0)
+        panel.setSpacing(6)
+        controls = QHBoxLayout()
+        controls.setSpacing(6)
+        self.tiff_mode = QComboBox()
+        self.tiff_mode.setObjectName("tiffMode")
+        self.tiff_mode.addItem(tr("tiff_mode_palette"), "palette")
+        self.tiff_mode.addItem(tr("tiff_mode_rgb"), "rgb")
+        self.tiff_palette = QComboBox()
+        self.tiff_palette.setObjectName("tiffPalette")
+        for palette_id in ("viridis", "ryg", "ylgnbu", "rdylbu", "spectral", "random"):
+            self.tiff_palette.addItem(tr(f"tiff_palette_{palette_id}"), palette_id)
+        self.tiff_band = QComboBox()
+        self.tiff_band.setObjectName("tiffBand")
+        self.tiff_red = QComboBox()
+        self.tiff_red.setObjectName("tiffRed")
+        self.tiff_green = QComboBox()
+        self.tiff_green.setObjectName("tiffGreen")
+        self.tiff_blue = QComboBox()
+        self.tiff_blue.setObjectName("tiffBlue")
+        self.tiff_red_label = QLabel("R")
+        self.tiff_green_label = QLabel("G")
+        self.tiff_blue_label = QLabel("B")
+        for combo in (self.tiff_mode, self.tiff_palette, self.tiff_band, self.tiff_red, self.tiff_green, self.tiff_blue):
+            combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+            combo.setMinimumContentsLength(8)
+        controls.addWidget(self.tiff_mode, 1)
+        controls.addWidget(self.tiff_palette, 1)
+        controls.addWidget(self.tiff_band, 1)
+        controls.addWidget(self.tiff_red_label)
+        controls.addWidget(self.tiff_red, 1)
+        controls.addWidget(self.tiff_green_label)
+        controls.addWidget(self.tiff_green, 1)
+        controls.addWidget(self.tiff_blue_label)
+        controls.addWidget(self.tiff_blue, 1)
+        self.tiff_colorbar = QLabel()
+        self.tiff_colorbar.setObjectName("tiffColorbar")
+        self.tiff_colorbar.setFixedHeight(14)
+        self.tiff_colorbar.setMinimumWidth(80)
+        self.tiff_colorbar.setScaledContents(True)
+        self.tiff_details_toggle = QToolButton()
+        self.tiff_details_toggle.setObjectName("tiffDetailsToggle")
+        self.tiff_details_toggle.setCheckable(True)
+        self.tiff_details_toggle.setChecked(True)
+        self.tiff_details_toggle.setAutoRaise(True)
+        self.tiff_details_toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.tiff_details_toggle.setArrowType(Qt.ArrowType.DownArrow)
+        self.tiff_details_toggle.setText(tr("tiff_details"))
+        self.tiff_details = QTableWidget(0, 2)
+        self.tiff_details.setObjectName("tiffDetails")
+        self.tiff_details.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.tiff_details.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.tiff_details.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.tiff_details.verticalHeader().hide()
+        self.tiff_details.horizontalHeader().hide()
+        self.tiff_details.setShowGrid(False)
+        self.tiff_details.setWordWrap(True)
+        self.tiff_details.setMaximumHeight(168)
+        self.tiff_details.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.tiff_details.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        detail_font = self.tiff_details.font()
+        detail_font.setPointSize(9)
+        self.tiff_details.setFont(detail_font)
+        panel.addLayout(controls)
+        panel.addWidget(self.tiff_colorbar)
+        panel.addWidget(self.tiff_details_toggle)
+        panel.addWidget(self.tiff_details)
+        self.tiff_panel.hide()
+        self.tiff_mode.currentIndexChanged.connect(self._on_tiff_style_changed)
+        self.tiff_palette.currentIndexChanged.connect(self._on_tiff_palette_changed)
+        self.tiff_band.currentIndexChanged.connect(self._on_tiff_style_changed)
+        self.tiff_red.currentIndexChanged.connect(self._on_tiff_style_changed)
+        self.tiff_green.currentIndexChanged.connect(self._on_tiff_style_changed)
+        self.tiff_blue.currentIndexChanged.connect(self._on_tiff_style_changed)
+        self.tiff_details_toggle.toggled.connect(self._toggle_tiff_details)
+
+    def _retranslate_tiff(self) -> None:
+        if not hasattr(self, "tiff_mode"):
+            return
+        self._tiff_updating = True
+        self.tiff_details_toggle.setText(tr("tiff_details"))
+        mode = self.tiff_mode.currentData()
+        self.tiff_mode.setItemText(0, tr("tiff_mode_palette"))
+        self.tiff_mode.setItemText(1, tr("tiff_mode_rgb"))
+        if mode is not None:
+            found = self.tiff_mode.findData(mode)
+            if found >= 0:
+                self.tiff_mode.setCurrentIndex(found)
+        for index in range(self.tiff_palette.count()):
+            palette_id = self.tiff_palette.itemData(index)
+            self.tiff_palette.setItemText(index, tr(f"tiff_palette_{palette_id}"))
+        for combo in (self.tiff_band, self.tiff_red, self.tiff_green, self.tiff_blue):
+            selected = combo.currentData()
+            combo.blockSignals(True)
+            for index in range(combo.count()):
+                band = combo.itemData(index)
+                combo.setItemText(index, tr("tiff_band", index=int(band) + 1))
+            if selected is not None:
+                found = combo.findData(selected)
+                if found >= 0:
+                    combo.setCurrentIndex(found)
+            combo.blockSignals(False)
+        self._tiff_updating = False
+        if self._tiff_info:
+            self._fill_tiff_details()
+            self.preview_notice.setText(style_notice(self._tiff_info))
+            self.preview_notice.show()
+
+    def _toggle_tiff_details(self, expanded: bool) -> None:
+        self.tiff_details.setVisible(expanded)
+        self.tiff_details_toggle.setArrowType(
+            Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
+        )
+
+    def _clear_tiff_panel(self) -> None:
+        self._tiff_array = None
+        self._tiff_info = {}
+        self._tiff_nodata = ""
+        if hasattr(self, "tiff_panel"):
+            self.tiff_panel.hide()
+
+    def _apply_tiff_panel(self, preview: Preview) -> None:
+        array = preview.tiff_array
+        self._tiff_array = array
+        self._tiff_nodata = preview.tiff_nodata or ""
+        self._tiff_info = dict(preview.tiff_info or {})
+        self._tiff_palette_id = str(self._tiff_info.get("palette") or "viridis")
+        if array is None or not preview.tiff_bands:
+            self.tiff_panel.hide()
+            return
+        count = int(preview.tiff_bands)
+        self._tiff_updating = True
+        self._fill_band_combo(self.tiff_band, count, 0)
+        self._fill_band_combo(self.tiff_red, count, 0)
+        self._fill_band_combo(self.tiff_green, count, min(1, count - 1))
+        self._fill_band_combo(self.tiff_blue, count, min(2, count - 1))
+        mode = preview.tiff_mode if preview.tiff_mode in {"rgb", "palette"} else "palette"
+        if count < 3 and mode == "rgb":
+            mode = "palette"
+        self._set_rgb_enabled(count >= 3)
+        found = self.tiff_mode.findData(mode)
+        self.tiff_mode.setCurrentIndex(found if found >= 0 else 0)
+        palette_index = self.tiff_palette.findData(self._tiff_palette_id)
+        self.tiff_palette.setCurrentIndex(palette_index if palette_index >= 0 else 0)
+        self._tiff_updating = False
+        self._fill_tiff_details()
+        self._sync_tiff_mode_widgets()
+        self._update_colorbar()
+        self.tiff_panel.show()
+
+    def _fill_band_combo(self, combo: QComboBox, count: int, selected: int) -> None:
+        combo.blockSignals(True)
+        combo.clear()
+        for index in range(count):
+            combo.addItem(tr("tiff_band", index=index + 1), index)
+        combo.setCurrentIndex(max(0, min(selected, count - 1)))
+        combo.blockSignals(False)
+
+    def _set_rgb_enabled(self, enabled: bool) -> None:
+        model = self.tiff_mode.model()
+        item = model.item(1) if model is not None else None
+        if item is not None:
+            item.setEnabled(enabled)
+
+    def _fill_tiff_details(self) -> None:
+        rows = tiff_detail_rows(self._tiff_info) if self._tiff_info else []
+        table = self.tiff_details
+        table.setRowCount(len(rows))
+        table.setColumnCount(2)
+        flags = Qt.ItemFlag.ItemIsEnabled
+        for row, (label, value) in enumerate(rows):
+            key_item = QTableWidgetItem(label)
+            value_item = QTableWidgetItem(value)
+            key_item.setFlags(flags)
+            value_item.setFlags(flags)
+            table.setItem(row, 0, key_item)
+            table.setItem(row, 1, value_item)
+        table.resizeRowsToContents()
+
+    def _sync_tiff_mode_widgets(self) -> None:
+        palette = self.tiff_mode.currentData() != "rgb"
+        self.tiff_palette.setVisible(palette)
+        self.tiff_band.setVisible(palette)
+        for widget in (
+            self.tiff_red_label,
+            self.tiff_red,
+            self.tiff_green_label,
+            self.tiff_green,
+            self.tiff_blue_label,
+            self.tiff_blue,
+        ):
+            widget.setVisible(not palette)
+        if palette:
+            self._update_colorbar()
+        else:
+            self.tiff_colorbar.hide()
+
+    def _update_colorbar(self) -> None:
+        if self.tiff_mode.currentData() == "rgb":
+            self.tiff_colorbar.hide()
+            return
+        pixmap = QPixmap()
+        pixmap.loadFromData(colorbar_png(self._tiff_palette_id or "viridis"), "PNG")
+        self.tiff_colorbar.setPixmap(pixmap)
+        self.tiff_colorbar.show()
+
+    def _on_tiff_palette_changed(self) -> None:
+        if self._tiff_updating:
+            return
+        choice = self.tiff_palette.currentData() or "viridis"
+        if choice == "random":
+            self._tiff_palette_id = random_palette()
+            self._tiff_updating = True
+            found = self.tiff_palette.findData(self._tiff_palette_id)
+            if found >= 0:
+                self.tiff_palette.setCurrentIndex(found)
+            self._tiff_updating = False
+        else:
+            self._tiff_palette_id = str(choice)
+        self._rerender_tiff()
+
+    def _on_tiff_style_changed(self) -> None:
+        if self._tiff_updating:
+            return
+        self._sync_tiff_mode_widgets()
+        self._rerender_tiff()
+
+    def _rerender_tiff(self) -> None:
+        if self._tiff_updating or self._tiff_array is None:
+            return
+        mode = self.tiff_mode.currentData() or "palette"
+        if mode == "rgb" and int(self._tiff_info.get("count") or 0) < 3:
+            mode = "palette"
+        band = int(self.tiff_band.currentData() or 0)
+        red = int(self.tiff_red.currentData() or 0)
+        green = int(self.tiff_green.currentData() or 0)
+        blue = int(self.tiff_blue.currentData() or 0)
+        png = render_styled(
+            self._tiff_array,
+            mode=str(mode),
+            palette=self._tiff_palette_id or "viridis",
+            band=band,
+            red=red,
+            green=green,
+            blue=blue,
+            nodata=self._tiff_nodata,
+        )
+        pixmap = QPixmap()
+        if pixmap.loadFromData(png, "PNG"):
+            self.preview_image.set_source(pixmap)
+        if self._tiff_info:
+            self._tiff_info["mode"] = str(mode)
+            self._tiff_info["palette"] = self._tiff_palette_id or "viridis"
+            self._tiff_info["band"] = band
+            self._tiff_info["red"] = red
+            self._tiff_info["green"] = green
+            self._tiff_info["blue"] = blue
+            self.preview_notice.setText(style_notice(self._tiff_info))
+            self.preview_notice.show()
+        self._update_colorbar()
 
     def _apply_shortcuts(self) -> None:
         refresh = QShortcut(QKeySequence(Qt.Key.Key_F5), self)
@@ -1220,6 +1530,29 @@ class MainWindow(QMainWindow):
                 self.bucket_list.setCurrentRow(index)
                 return
 
+    def _copy_endpoint(self) -> None:
+        text = self.endpoint.text().strip()
+        if not text:
+            self.statusBar().showMessage(tr("err_endpoint_missing"), 3000)
+            return
+        QApplication.clipboard().setText(text)
+        self.statusBar().showMessage(tr("copied_endpoint"), 3000)
+
+    def _copy_bucket_name(self, name: str) -> None:
+        text = name.strip()
+        if not text:
+            return
+        QApplication.clipboard().setText(text)
+        self.statusBar().showMessage(tr("copied_bucket"), 3000)
+
+    def _bucket_copy_name_at(self, pos) -> str:
+        item = self.bucket_list.itemAt(pos)
+        if item is None or item.isHidden():
+            return ""
+        if not _bucket_copy_hit(self.bucket_list.visualItemRect(item)).contains(pos):
+            return ""
+        return str(item.data(Qt.ItemDataRole.UserRole) or item.text() or "")
+
     def _on_bucket_clicked(self, item: QListWidgetItem) -> None:
         name = item.data(Qt.ItemDataRole.UserRole)
         if not name:
@@ -1382,7 +1715,26 @@ class MainWindow(QMainWindow):
         self._activate(row, navigate=True)
 
     def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt-API
-        if watched is self.object_table and event.type() == QEvent.Type.KeyPress:
+        if watched is self.bucket_list.viewport() and event.type() in {
+            QEvent.Type.MouseButtonPress,
+            QEvent.Type.MouseButtonRelease,
+            QEvent.Type.MouseButtonDblClick,
+            QEvent.Type.MouseMove,
+        }:
+            pos = event.position().toPoint()
+            if event.type() == QEvent.Type.MouseMove:
+                self.bucket_list.viewport().setCursor(
+                    Qt.CursorShape.PointingHandCursor
+                    if self._bucket_copy_name_at(pos)
+                    else Qt.CursorShape.ArrowCursor
+                )
+                return False
+            if event.button() == Qt.MouseButton.LeftButton and self._bucket_copy_name_at(pos):
+                if event.type() == QEvent.Type.MouseButtonPress:
+                    self._copy_bucket_name(self._bucket_copy_name_at(pos))
+                return True
+        table = getattr(self, "object_table", None)
+        if table is not None and watched is table and event.type() == QEvent.Type.KeyPress:
             if event.matches(QKeySequence.StandardKey.SelectAll):
                 self._select_visible_rows()
                 return True
@@ -1499,17 +1851,44 @@ class MainWindow(QMainWindow):
         key = entry.key
 
         def work() -> Preview:
-            limit = TIFF_PREVIEW_BYTE_LIMIT if is_tiff(key) else PREVIEW_BYTE_LIMIT
+            if is_tiff(key):
+                remote_size, remote_type = _remote_object_info(session, bucket, key)
+                if (
+                    remote_size is not None
+                    and remote_size > TIFF_PREVIEW_BYTE_LIMIT
+                    and hasattr(session, "read_range")
+                ):
+                    return _preview_tiff_ranges(
+                        session,
+                        bucket,
+                        key,
+                        remote_size,
+                        remote_type or "image/tiff",
+                    )
+            limit = (
+                TIFF_PREVIEW_BYTE_LIMIT
+                if is_tiff(key)
+                else IMAGE_PREVIEW_BYTE_LIMIT
+                if is_image(key)
+                else PREVIEW_BYTE_LIMIT
+            )
             fetched = session.fetch(bucket, key, limit)
             if is_tiff(key, fetched.content_type) and fetched.truncated and limit < TIFF_PREVIEW_BYTE_LIMIT:
                 fetched = session.fetch(bucket, key, TIFF_PREVIEW_BYTE_LIMIT)
-            if is_tiff(key, fetched.content_type):
-                return build_preview(
+            if is_image(key, fetched.content_type) and fetched.truncated and limit < IMAGE_PREVIEW_BYTE_LIMIT:
+                fetched = session.fetch(bucket, key, IMAGE_PREVIEW_BYTE_LIMIT)
+            if (
+                is_tiff(key, fetched.content_type)
+                and fetched.truncated
+                and fetched.size > TIFF_PREVIEW_BYTE_LIMIT
+                and hasattr(session, "read_range")
+            ):
+                return _preview_tiff_ranges(
+                    session,
+                    bucket,
                     key,
-                    fetched.data,
-                    content_type=fetched.content_type or "image/tiff",
-                    size=fetched.size,
-                    truncated=fetched.truncated,
+                    fetched.size,
+                    fetched.content_type or "image/tiff",
                 )
             return build_preview(
                 key,
@@ -1534,6 +1913,7 @@ class MainWindow(QMainWindow):
         self._submit("preview", work, ok, err)
 
     def _show_preview(self, preview: Preview, entry: ObjectEntry) -> None:
+        self._clear_tiff_panel()
         self._current_entry = entry
         self.preview_title.setText(preview.filename)
         self.preview_dock.setWindowTitle(tr("preview_named", name=preview.filename))
@@ -1549,7 +1929,7 @@ class MainWindow(QMainWindow):
         else:
             self.preview_notice.hide()
         self.download_button.setEnabled(True)
-        if preview.kind != "tiff":
+        if preview.kind not in {"tiff", "image"}:
             self.preview_image.set_source(QPixmap())
         editable = preview.kind in EDITABLE_KINDS and not preview.truncated and bool(preview.text or preview.kind == "empty")
         if preview.kind not in EDITABLE_KINDS or preview.truncated:
@@ -1564,15 +1944,18 @@ class MainWindow(QMainWindow):
             self._show_message_preview(preview.filename, preview.notice or tr("no_preview"))
             self._set_badge(_badge_for(preview.kind))
             return
-        if preview.kind == "tiff":
+        if preview.kind in {"tiff", "image"}:
             self.copy_button.setEnabled(False)
             pixmap = QPixmap()
             if preview.image and pixmap.loadFromData(preview.image, "PNG"):
+                if preview.kind == "tiff":
+                    self._apply_tiff_panel(preview)
                 self.preview_image.set_source(pixmap)
                 self.preview_stack.setCurrentWidget(self.preview_image_page)
                 return
-            self._show_message_preview(preview.filename, preview.notice or tr("no_tiff"))
-            self._set_badge("TIFF")
+            message = preview.notice or (tr("no_tiff") if preview.kind == "tiff" else tr("image_failed"))
+            self._show_message_preview(preview.filename, message)
+            self._set_badge(_badge_for(preview.kind))
             return
         self._preview_save_type = content_type_for_save(preview.kind, preview.content_type)
         self._set_text_editor(preview.text, editable=editable, language=highlight_language(preview.kind))
@@ -1601,6 +1984,7 @@ class MainWindow(QMainWindow):
         table.verticalHeader().setVisible(True)
 
     def _show_message_preview(self, title: str, message: str) -> None:
+        self._clear_tiff_panel()
         self.preview_title.setText(title)
         self.preview_message.setText(message)
         self.preview_stack.setCurrentWidget(self.preview_message_page)
@@ -1741,7 +2125,28 @@ class MainWindow(QMainWindow):
             if index.row() not in selected:
                 self.object_table.selectRow(index.row())
         entries = self._selected_entries()
+        menu = self._file_menu(entries)
+        chosen = menu.exec(self.object_table.viewport().mapToGlobal(pos))
+        if chosen is None:
+            return
+        action = chosen.data()
+        if action == "download":
+            self._download_selected()
+        elif action == "copy_path":
+            self._copy_paths()
+        elif action == "copy_name":
+            self._copy_names()
+        elif action == "copy_files":
+            self._copy_files()
+        elif action == "paste_files":
+            self._paste_files()
+        elif action == "delete":
+            self._delete_selected()
+
+    def _file_menu(self, entries: list[ObjectEntry]) -> QMenu:
         menu = QMenu(self)
+        download_files = menu.addAction(tr("download"))
+        menu.addSeparator()
         copy_path = menu.addAction(tr("copy_path"))
         copy_name = menu.addAction(tr("copy_name"))
         menu.addSeparator()
@@ -1750,22 +2155,19 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         delete_files = menu.addAction(tr("delete"))
         has_entries = bool(entries)
+        download_files.setEnabled(has_entries)
+        download_files.setData("download")
         copy_path.setEnabled(has_entries)
+        copy_path.setData("copy_path")
         copy_name.setEnabled(has_entries)
+        copy_name.setData("copy_name")
         copy_files.setEnabled(has_entries)
+        copy_files.setData("copy_files")
         paste_files.setEnabled(bool(self._file_clipboard) and self.session is not None and bool(self.bucket_name))
+        paste_files.setData("paste_files")
         delete_files.setEnabled(has_entries)
-        chosen = menu.exec(self.object_table.viewport().mapToGlobal(pos))
-        if chosen is copy_path:
-            self._copy_paths()
-        elif chosen is copy_name:
-            self._copy_names()
-        elif chosen is copy_files:
-            self._copy_files()
-        elif chosen is paste_files:
-            self._paste_files()
-        elif chosen is delete_files:
-            self._delete_selected()
+        delete_files.setData("delete")
+        return menu
 
     def _copy_paths(self) -> None:
         entries = self._selected_entries()
@@ -2401,6 +2803,44 @@ def _draw_folder_new(painter: QPainter) -> None:
     painter.drawLine(49, 23, 49, 45)
 
 
+def _draw_copy(painter: QPainter) -> None:
+    pen = painter.pen()
+    pen.setWidth(5)
+    painter.setPen(pen)
+    painter.drawRoundedRect(16, 14, 28, 34, 5, 5)
+    painter.drawRoundedRect(26, 22, 28, 34, 5, 5)
+
+
+def _bucket_copy_rect(item_rect: QRect) -> QRect:
+    size = 18
+    x = item_rect.right() - 8 - size
+    y = item_rect.center().y() - size // 2
+    return QRect(x, y, size, size)
+
+
+def _bucket_copy_hit(item_rect: QRect) -> QRect:
+    return QRect(item_rect.right() - 33, item_rect.top(), 34, item_rect.height())
+
+
+class _BucketCopyDelegate(QStyledItemDelegate):
+    def __init__(self, icon_getter, parent=None):
+        super().__init__(parent)
+        self._icon_getter = icon_getter
+
+    def paint(self, painter, option, index) -> None:  # noqa: N802 - Qt-API
+        super().paint(painter, option, index)
+        icon = self._icon_getter()
+        if icon is None or icon.isNull():
+            return
+        icon.paint(painter, _bucket_copy_rect(option.rect), Qt.AlignmentFlag.AlignCenter)
+
+    def helpEvent(self, event, view, option, index) -> bool:  # noqa: N802 - Qt-API
+        if event.type() == QEvent.Type.ToolTip and _bucket_copy_hit(option.rect).contains(event.pos()):
+            QToolTip.showText(event.globalPos(), tr("copy_bucket"), view)
+            return True
+        return super().helpEvent(event, view, option, index)
+
+
 def _draw_trash(painter: QPainter) -> None:
     pen = painter.pen()
     pen.setWidth(4)
@@ -2472,6 +2912,31 @@ def format_dt(value: datetime | None) -> str:
     return value.astimezone().strftime("%d.%m.%Y %H:%M")
 
 
+def _remote_object_info(session, bucket: str, key: str) -> tuple[int | None, str]:
+    info = getattr(session, "object_info", None)
+    if info is None:
+        return None, ""
+    try:
+        size, content_type = info(bucket, key)
+    except Exception:
+        return None, ""
+    return size, content_type or ""
+
+
+def _preview_tiff_ranges(session, bucket: str, key: str, size: int, content_type: str) -> Preview:
+    reader = RangeReader(
+        lambda start, length, bucket=bucket, key=key: session.read_range(bucket, key, start, length),
+        size,
+    )
+    return build_tiff_from_source(
+        key,
+        reader,
+        content_type=content_type or "image/tiff",
+        size=size,
+        allow_full=False,
+    )
+
+
 def _badge_for(kind: str) -> str:
     return {
         "json": "JSON",
@@ -2484,6 +2949,7 @@ def _badge_for(kind: str) -> str:
         "tsv": "TSV",
         "text": "Text",
         "tiff": "TIFF",
+        "image": "Bild",
         "empty": "Leer",
         "binary": "Datei",
     }.get(kind, "")

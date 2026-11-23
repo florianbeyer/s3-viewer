@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from xml.dom import minidom
 
 PREVIEW_BYTE_LIMIT = 1_000_000
+IMAGE_PREVIEW_BYTE_LIMIT = 80 * 1024 * 1024
+IMAGE_PREVIEW_EDGE = 1600
 CSV_ROW_LIMIT = 2000
 CSV_COLUMN_LIMIT = 40
 
@@ -64,6 +66,33 @@ TEXT_EXTENSIONS = {
     "tex",
     "r",
     "dockerfile",
+}
+
+IMAGE_EXTENSIONS = {
+    "png",
+    "jpg",
+    "jpeg",
+    "jfif",
+    "gif",
+    "webp",
+    "bmp",
+    "ico",
+    "heic",
+    "heif",
+}
+
+IMAGE_CONTENT_TYPES = {
+    "image/png",
+    "image/jpeg",
+    "image/jpg",
+    "image/gif",
+    "image/webp",
+    "image/bmp",
+    "image/x-ms-bmp",
+    "image/x-icon",
+    "image/vnd.microsoft.icon",
+    "image/heic",
+    "image/heif",
 }
 
 BINARY_EXTENSIONS = {
@@ -160,6 +189,12 @@ class Preview:
     size: int = 0
     image: bytes = b""
     content_type: str = ""
+    tiff_array: object = None
+    meta_rows: list[tuple[str, str]] = field(default_factory=list)
+    tiff_bands: int = 0
+    tiff_mode: str = ""
+    tiff_nodata: str = ""
+    tiff_info: dict = field(default_factory=dict)
 
 
 def extension_of(key: str) -> str:
@@ -167,6 +202,12 @@ def extension_of(key: str) -> str:
     if "." not in name:
         return ""
     return name.rsplit(".", 1)[-1].lower()
+
+
+def is_image(key: str, content_type: str = "") -> bool:
+    if extension_of(key) in IMAGE_EXTENSIONS:
+        return True
+    return content_type_base(content_type) in IMAGE_CONTENT_TYPES
 
 
 def decode_text(data: bytes) -> str:
@@ -232,6 +273,8 @@ def detect_kind(key: str, content_type: str, data: bytes) -> str:
     ctype = content_type_base(content_type)
     if ext in {"tif", "tiff"} or ctype == "image/tiff":
         return "tiff"
+    if ext in IMAGE_EXTENSIONS or ctype in IMAGE_CONTENT_TYPES:
+        return "image"
     if ext in BINARY_EXTENSIONS and not ctype.startswith("text/") and ctype not in TEXT_CONTENT_TYPES:
         return "binary"
     if ext in {"json", "geojson"} or ctype in {"application/json", "application/geo+json"}:
@@ -256,6 +299,54 @@ def detect_kind(key: str, content_type: str, data: bytes) -> str:
             return "binary"
         return "text"
     return "binary"
+
+
+def _build_image_preview(preview: Preview, data: bytes, *, size: int, truncated: bool) -> Preview:
+    if not data:
+        preview.kind = "empty"
+        preview.notice = tr("empty_file")
+        return preview
+    if truncated or len(data) > IMAGE_PREVIEW_BYTE_LIMIT or size > IMAGE_PREVIEW_BYTE_LIMIT:
+        preview.notice = tr("image_too_big", limit=IMAGE_PREVIEW_BYTE_LIMIT // (1024 * 1024))
+        return preview
+    try:
+        png, width, height = _image_png(data)
+    except (OSError, ValueError):
+        preview.notice = tr("image_failed")
+        return preview
+    preview.image = png
+    long_side = max(width, height)
+    if long_side > IMAGE_PREVIEW_EDGE:
+        preview.notice = tr("image_scaled", edge=IMAGE_PREVIEW_EDGE, width=width, height=height)
+    return preview
+
+
+def _image_png(data: bytes) -> tuple[bytes, int, int]:
+    from PIL import Image, UnidentifiedImageError
+
+    previous_limit = Image.MAX_IMAGE_PIXELS
+    Image.MAX_IMAGE_PIXELS = 80_000_000
+    try:
+        try:
+            image = Image.open(io.BytesIO(data))
+            image.load()
+        except (UnidentifiedImageError, Image.DecompressionBombError) as exc:
+            raise ValueError(str(exc)) from exc
+        with image:
+            image.seek(0)
+            width, height = image.size
+            if image.mode in {"RGBA", "LA", "PA"}:
+                frame = image.convert("RGBA")
+            elif image.mode == "P":
+                frame = image.convert("RGBA")
+            else:
+                frame = image.convert("RGB")
+            frame.thumbnail((IMAGE_PREVIEW_EDGE, IMAGE_PREVIEW_EDGE), Image.Resampling.LANCZOS)
+            buffer = io.BytesIO()
+            frame.save(buffer, format="PNG", compress_level=1)
+    finally:
+        Image.MAX_IMAGE_PIXELS = previous_limit
+    return buffer.getvalue(), width, height
 
 
 def build_preview(
@@ -283,6 +374,13 @@ def build_preview(
             key,
             data,
             content_type=content_type,
+            size=actual_size,
+            truncated=truncated,
+        )
+    if kind == "image":
+        return _build_image_preview(
+            preview,
+            data,
             size=actual_size,
             truncated=truncated,
         )

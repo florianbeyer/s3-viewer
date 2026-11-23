@@ -1,12 +1,25 @@
 from datetime import datetime, timezone
 
 from botocore.exceptions import ClientError
+from PIL import Image
 from PySide6.QtCore import Qt
 
 from s3viewer.highlight import KEY_COLOR, KEYWORD_COLOR
 from s3viewer.i18n import language, set_language
 from s3viewer.s3 import BucketInfo, Connected, ConnectionSettings, FetchedObject, ObjectEntry
 from s3viewer.window import MainWindow
+
+
+def _tiny_png() -> bytes:
+    import io
+
+    image = Image.new("RGB", (40, 20), (20, 90, 160))
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+_TINY_PNG = _tiny_png()
 
 
 class FakeSession:
@@ -57,7 +70,7 @@ class FakeSession:
             "readme.txt": (b"Hallo Welt\n", "text/plain"),
             "daten/tabelle.csv": (b"Name;Wert\nAlpha;1\nBeta;2\n", "text/csv"),
             "daten/config.json": (b'{"ok": true, "n": 2}', "application/json"),
-            "daten/bild.png": (b"\x89PNG\r\n\x1a\n" + b"\x00" * 8, "image/png"),
+            "daten/bild.png": (_TINY_PNG, "image/png"),
         }
         data, content_type = bodies[key]
         return FetchedObject(data=data, size=len(data), content_type=content_type, truncated=False)
@@ -124,7 +137,9 @@ def test_browse_buckets_folders_and_preview_files(qtbot, tmp_path):
     assert window.preview_badge.text() == "CSV"
 
     _click_object(qtbot, window, "bild.png")
-    qtbot.waitUntil(lambda: "keine Textvorschau" in window.preview_message.text(), timeout=4000)
+    qtbot.waitUntil(lambda: not window.preview_image._source.isNull(), timeout=4000)
+    assert window.preview_badge.text() == "Bild"
+    assert window.preview_stack.currentWidget() is window.preview_image_page
 
     qtbot.mouseClick(window.up_button, Qt.MouseButton.LeftButton)
     qtbot.waitUntil(lambda: "readme.txt" in _object_names(window), timeout=4000)
@@ -277,6 +292,9 @@ def test_right_click_can_copy_path_name_and_paste(qtbot, tmp_path):
     _click_bucket(qtbot, window, "projekt")
     qtbot.waitUntil(lambda: "readme.txt" in _object_names(window), timeout=4000)
     _select_rows(window, ["readme.txt", "daten"])
+    menu = window._file_menu(window._selected_entries())
+    assert menu.actions()[0].text() == "Herunterladen"
+    assert menu.actions()[0].isEnabled()
 
     window._copy_paths()
     assert QApplication.clipboard().text() == "projekt/readme.txt\nprojekt/daten/"
@@ -340,6 +358,14 @@ def test_tiff_file_shows_a_coarse_preview(qtbot, tmp_path):
     assert "Grobe Vorschau" in window.preview_notice.text()
     assert window.preview_stack.currentWidget() is window.preview_image_page
     assert window.preview_image._source.width() <= 640
+    assert window.tiff_panel.isVisible()
+    labels = [window.tiff_details.item(row, 0).text() for row in range(window.tiff_details.rowCount())]
+    assert "Größe" in labels
+    before = window.preview_image._source.toImage().pixel(10, 10)
+    window.tiff_mode.setCurrentIndex(window.tiff_mode.findData("palette"))
+    window.tiff_palette.setCurrentIndex(window.tiff_palette.findData("ryg"))
+    after = window.preview_image._source.toImage().pixel(10, 10)
+    assert before != after
 
 
 def test_text_preview_can_be_edited_and_written_back(qtbot, tmp_path):
@@ -501,6 +527,45 @@ def test_secret_is_not_written_to_settings(qtbot, tmp_path):
     assert restored.secret_key.text() == ""
 
 
+def test_bucket_events_during_startup_do_not_crash(qtbot, tmp_path):
+    from PySide6.QtCore import QEvent
+
+    window = MainWindow(session_factory=FakeSession, settings_path=str(tmp_path / "settings.ini"))
+    qtbot.addWidget(window)
+    table = window.object_table
+    del window.object_table
+    try:
+        assert window.eventFilter(window.bucket_list.viewport(), QEvent(QEvent.Type.Show)) is False
+    finally:
+        window.object_table = table
+
+
+def test_endpoint_and_bucket_name_can_be_copied(qtbot, tmp_path):
+    from PySide6.QtWidgets import QApplication
+
+    window = MainWindow(session_factory=FakeSession, settings_path=str(tmp_path / "settings.ini"))
+    qtbot.addWidget(window)
+    window.show()
+    qtbot.mouseClick(window.copy_endpoint_button, Qt.MouseButton.LeftButton)
+    assert window.statusBar().currentMessage() == "Der Endpunkt fehlt."
+
+    window.endpoint.setText("  https://s3.example.com/v1  ")
+    window.access_key.setText("ak")
+    window.secret_key.setText("sk")
+    qtbot.mouseClick(window.copy_endpoint_button, Qt.MouseButton.LeftButton)
+    assert QApplication.clipboard().text() == "https://s3.example.com/v1"
+    assert window.statusBar().currentMessage() == "Endpunkt kopiert"
+
+    qtbot.mouseClick(window.connect_button, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(lambda: window.bucket_list.count() == 2, timeout=4000)
+    _click_bucket_copy(qtbot, window, "archiv")
+    assert QApplication.clipboard().text() == "archiv"
+    assert window.bucket_name == ""
+    assert window.statusBar().currentMessage() == "Bucket-Name kopiert"
+    _click_bucket(qtbot, window, "projekt")
+    qtbot.waitUntil(lambda: window.bucket_name == "projekt", timeout=4000)
+
+
 def test_missing_endpoint_is_rejected_before_connecting(qtbot, tmp_path):
     window = MainWindow(session_factory=FakeSession, settings_path=str(tmp_path / "settings.ini"))
     qtbot.addWidget(window)
@@ -552,6 +617,20 @@ def _object_names(window: MainWindow) -> list[str]:
         elif row.entry is not None:
             names.append(row.entry.name)
     return names
+
+
+def _click_bucket_copy(qtbot, window: MainWindow, name: str) -> None:
+    for index in range(window.bucket_list.count()):
+        item = window.bucket_list.item(index)
+        if item is not None and item.text() == name:
+            window.bucket_list.scrollToItem(item)
+            rect = window.bucket_list.visualItemRect(item)
+            assert rect.isValid() and not rect.isEmpty()
+            pos = rect.center()
+            pos.setX(rect.right() - 16)
+            qtbot.mouseClick(window.bucket_list.viewport(), Qt.MouseButton.LeftButton, pos=pos)
+            return
+    raise AssertionError(name)
 
 
 def _click_bucket(qtbot, window: MainWindow, name: str) -> None:

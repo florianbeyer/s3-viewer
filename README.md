@@ -2,10 +2,10 @@
 
 # S3 Viewer
 
-Beta **0.1.0**. This software is in development.
+Beta **0.2.0**. This software is in development.
 
 <p>
-  <img alt="Beta 0.1.0" src="https://img.shields.io/badge/beta-0.1.0-f59e0b?style=for-the-badge">
+  <img alt="Beta 0.2.0" src="https://img.shields.io/badge/beta-0.2.0-f59e0b?style=for-the-badge">
   <img alt="In development" src="https://img.shields.io/badge/status-in%20development-eab308?style=for-the-badge">
   <img alt="Linux, macOS, and Windows" src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-0f766e?style=for-the-badge">
   <img alt="Python 3.12 or newer" src="https://img.shields.io/badge/Python-3.12%2B-3776AB?style=for-the-badge&logo=python&logoColor=white">
