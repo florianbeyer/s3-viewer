@@ -2,10 +2,10 @@
 
 # S3 Viewer
 
-Beta **0.2.0**. This software is in development.
+Beta **0.2.2**. This software is in development.
 
 <p>
-  <img alt="Beta 0.2.0" src="https://img.shields.io/badge/beta-0.2.0-f59e0b?style=for-the-badge">
+  <img alt="Beta 0.2.2" src="https://img.shields.io/badge/beta-0.2.2-f59e0b?style=for-the-badge">
   <img alt="In development" src="https://img.shields.io/badge/status-in%20development-eab308?style=for-the-badge">
   <img alt="Linux, macOS, and Windows" src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-0f766e?style=for-the-badge">
   <img alt="Python 3.12 or newer" src="https://img.shields.io/badge/Python-3.12%2B-3776AB?style=for-the-badge&logo=python&logoColor=white">
@@ -17,7 +17,9 @@ A desktop app for browsing OpenStack and other S3 buckets. Open files, change th
 
 <img src="misc/Forest%20segmentation%20storage%20and%20YAML%20preview.png" alt="Browsing a bucket and previewing a YAML file" width="100%">
 
-<img src="misc/Dark%20and%20light%20mode%20comparison.png" alt="Dark and light mode" width="72%">
+<img src="misc/Anonymized_land-cover_map_interface.png" alt="GeoTIFF preview with metadata, a color scale, and a coarse overview" width="100%">
+
+<img src="misc/Anonymized_storage_configuration_light_and_dark.png" alt="Dark and light mode" width="72%">
 
 ## Features
 
@@ -25,6 +27,8 @@ A desktop app for browsing OpenStack and other S3 buckets. Open files, change th
 - 🗂️ Double-click through folders
 - 🔎 Filter by name
 - ✏️ Open and edit files right there — txt, yaml, xml, json, csv, and tiff
+- 🗺️ Preview GeoTIFFs up to 500 MB, and COGs from overviews, with metadata plus a choice of bands and color scales
+- 🖼️ Preview standard images — jpg, png, and the usual formats
 - ⬆️⬇️🗑️ Upload, download, and delete files and folders
 - 🌙☀️ Light and dark mode
 

@@ -11,6 +11,13 @@ Changes sit under **Unreleased** until a version is declared.
 
 ### Fixed
 
+## [0.2.2] - 2026-11-23
+
+### Changed
+
+- The README now lists GeoTIFF and Cloud Optimized GeoTIFF preview, including metadata, band choice, and color scales, plus preview for standard images such as JPEG and PNG.
+- README screenshots are anonymized. The land-cover preview and the light and dark mode comparison no longer show a real endpoint or connection name.
+
 ## [0.2.0] - 2026-11-23
 
 ### Added
