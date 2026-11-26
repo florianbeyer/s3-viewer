@@ -9,6 +9,8 @@ Changes sit under **Unreleased** until a version is declared.
 
 ### Changed
 
+- The README links to the changelog and describes saved connections as S3 connections.
+
 ### Fixed
 
 ## [0.2.3] - 2026-11-26

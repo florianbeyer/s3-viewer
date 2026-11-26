@@ -23,7 +23,7 @@ A desktop app for browsing OpenStack and other S3 buckets. Open files, change th
 
 ## Features
 
-- 💾 Save connections
+- 💾 Save s3 connections
 - 🗂️ Double-click through folders
 - 🔎 Filter by name
 - ✏️ Open and edit files right there — txt, yaml, xml, json, csv, and tiff
@@ -31,6 +31,8 @@ A desktop app for browsing OpenStack and other S3 buckets. Open files, change th
 - 🖼️ Preview standard images — jpg, png, and the usual formats
 - ⬆️⬇️🗑️ Upload, download, and delete files and folders
 - 🌙☀️ Light and dark mode
+
+More information in [changelog.md](CHANGELOG.md).
 
 ## Run it
 
