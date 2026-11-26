@@ -9,9 +9,17 @@ Changes sit under **Unreleased** until a version is declared.
 
 ### Changed
 
-- The README links to the changelog and describes saved connections as S3 connections.
-
 ### Fixed
+
+## [0.2.4] - 2026-11-26
+
+### Added
+
+- File list columns can be sorted up or down by name, size, or date. The parent folder stays at the top.
+
+### Changed
+
+- The README links to the changelog and describes saved connections as S3 connections.
 
 ## [0.2.3] - 2026-11-26
 

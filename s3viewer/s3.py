@@ -252,8 +252,23 @@ def entries_from_listing(prefix: str, response: dict[str, Any]) -> list[ObjectEn
     return list(folders.values()) + list(files.values())
 
 
-def sort_entries(entries: list[ObjectEntry]) -> list[ObjectEntry]:
-    return sorted(entries, key=lambda entry: (0 if entry.is_folder else 1, entry.name.casefold()))
+def sort_entries(
+    entries: list[ObjectEntry],
+    *,
+    column: int = 0,
+    descending: bool = False,
+) -> list[ObjectEntry]:
+    def key(entry: ObjectEntry):
+        if column == 1:
+            return entry.size if entry.size is not None else -1
+        if column == 2:
+            modified = entry.last_modified
+            return modified.timestamp() if modified is not None else float("-inf")
+        return entry.name.casefold()
+
+    folders = sorted((entry for entry in entries if entry.is_folder), key=key, reverse=descending)
+    files = sorted((entry for entry in entries if not entry.is_folder), key=key, reverse=descending)
+    return folders + files
 
 
 def dedupe_entries(entries: list[ObjectEntry]) -> list[ObjectEntry]:

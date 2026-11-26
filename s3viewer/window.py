@@ -281,6 +281,9 @@ class MainWindow(QMainWindow):
         self.bucket_name = ""
         self.prefix = ""
         self._rows: list[BrowserRow] = []
+        self._listed_entries: list[ObjectEntry] = []
+        self._sort_column = 0
+        self._sort_descending = False
         self._current_entry: ObjectEntry | None = None
         self._inflight_key: str | None = None
         self._preview_text_cache = ""
@@ -560,6 +563,10 @@ class MainWindow(QMainWindow):
         self.object_table.itemSelectionChanged.connect(self._sync_buttons)
         header = self.object_table.horizontalHeader()
         header.setHighlightSections(False)
+        header.setSectionsClickable(True)
+        header.setSortIndicatorShown(True)
+        header.setSortIndicator(0, Qt.SortOrder.AscendingOrder)
+        header.sectionClicked.connect(self._sort_by_column)
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
@@ -1637,8 +1644,28 @@ class MainWindow(QMainWindow):
 
     def _fill_objects(self, entries: list[ObjectEntry], capped: bool) -> None:
         del capped
+        self._listed_entries = list(entries)
+        self._show_object_rows()
+
+    def _sort_by_column(self, column: int) -> None:
+        if column == self._sort_column:
+            self._sort_descending = not self._sort_descending
+        else:
+            self._sort_column = column
+            self._sort_descending = False
+        order = Qt.SortOrder.DescendingOrder if self._sort_descending else Qt.SortOrder.AscendingOrder
+        self.object_table.horizontalHeader().setSortIndicator(column, order)
+        selected = [entry.key for entry in self._selected_entries()]
+        self._show_object_rows(selected)
+
+    def _show_object_rows(self, selected_keys: list[str] | None = None) -> None:
+        entries = sort_entries(
+            self._listed_entries,
+            column=self._sort_column,
+            descending=self._sort_descending,
+        )
         rows = [BrowserRow(entry=None, is_up=True)] if self.prefix else []
-        rows.extend(BrowserRow(entry=entry) for entry in sort_entries(entries))
+        rows.extend(BrowserRow(entry=entry) for entry in entries)
         self._rows = rows
         table = self.object_table
         table.blockSignals(True)
@@ -1665,6 +1692,14 @@ class MainWindow(QMainWindow):
             modified = QTableWidgetItem("" if entry.is_folder else format_dt(entry.last_modified))
             table.setItem(index, 2, modified)
         table.clearSelection()
+        if selected_keys:
+            wanted = set(selected_keys)
+            selection = table.selectionModel()
+            if selection is not None:
+                flags = QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows
+                for index, row in enumerate(rows):
+                    if row.entry is not None and row.entry.key in wanted:
+                        selection.select(table.model().index(index, 0), flags)
         table.blockSignals(False)
         self._apply_filter()
         self._sync_buttons()

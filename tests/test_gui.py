@@ -184,6 +184,36 @@ def test_bucket_and_file_name_filters(qtbot, tmp_path):
     assert window.object_table.isRowHidden(_row_named(window, "bild.png"))
 
 
+def test_file_columns_sort_up_and_down(qtbot, tmp_path):
+    window = MainWindow(session_factory=FakeSession, settings_path=str(tmp_path / "settings.ini"))
+    qtbot.addWidget(window)
+    window.show()
+    window.endpoint.setText("https://s3.example.com")
+    window.access_key.setText("ak")
+    window.secret_key.setText("sk")
+    qtbot.mouseClick(window.connect_button, Qt.MouseButton.LeftButton)
+    qtbot.waitUntil(lambda: window.bucket_list.count() == 2, timeout=4000)
+    _click_bucket(qtbot, window, "projekt")
+    qtbot.waitUntil(lambda: "daten" in _object_names(window), timeout=4000)
+    _click_object(qtbot, window, "daten")
+    qtbot.waitUntil(lambda: "bild.png" in _object_names(window), timeout=4000)
+
+    def names() -> list[str]:
+        return [
+            window.object_table.item(row, 0).text()
+            for row in range(window.object_table.rowCount())
+            if window.object_table.item(row, 0) is not None
+        ]
+
+    assert names() == ["..", "bild.png", "config.json", "tabelle.csv"]
+    window.object_table.horizontalHeader().sectionClicked.emit(1)
+    assert names() == ["..", "config.json", "tabelle.csv", "bild.png"]
+    window.object_table.horizontalHeader().sectionClicked.emit(1)
+    assert names() == ["..", "bild.png", "tabelle.csv", "config.json"]
+    window.object_table.horizontalHeader().sectionClicked.emit(0)
+    assert names() == ["..", "bild.png", "config.json", "tabelle.csv"]
+
+
 def test_several_files_can_be_selected_for_download(qtbot, tmp_path):
     from PySide6.QtCore import QItemSelectionModel
 

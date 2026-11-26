@@ -5,6 +5,7 @@ from botocore.exceptions import ClientError
 
 from s3viewer.s3 import (
     ConnectionSettings,
+    ObjectEntry,
     S3Session,
     entries_from_listing,
     humanize_error,
@@ -54,6 +55,18 @@ def test_entries_keep_one_folder_level_and_ignore_duplicate_markers():
         ("logs", True, "logs/"),
         ("readme.txt", False, "readme.txt"),
     ]
+
+
+def test_columns_sort_up_and_down_without_moving_folders_below_files():
+    entries = [
+        ObjectEntry("zeta.txt", "zeta.txt", False, 5, datetime(2024, 3, 1, tzinfo=timezone.utc)),
+        ObjectEntry("alpha", "alpha/", True, None, datetime(2024, 1, 1, tzinfo=timezone.utc)),
+        ObjectEntry("mid.txt", "mid.txt", False, 20, datetime(2024, 2, 1, tzinfo=timezone.utc)),
+    ]
+    by_size = sort_entries(entries, column=1, descending=True)
+    assert [entry.name for entry in by_size] == ["alpha", "mid.txt", "zeta.txt"]
+    by_name = sort_entries(entries, descending=True)
+    assert [entry.name for entry in by_name] == ["alpha", "zeta.txt", "mid.txt"]
     nested = entries_from_listing(
         "daten/",
         {"Contents": [{"Key": "daten/tabelle.csv", "Size": 4}, {"Key": "daten/sub/x.txt", "Size": 1}]},

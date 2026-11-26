@@ -2,10 +2,10 @@
 
 # S3 Viewer
 
-Beta **0.2.3**. This software is in development.
+Beta **0.2.4**. This software is in development.
 
 <p>
-  <img alt="Beta 0.2.3" src="https://img.shields.io/badge/beta-0.2.3-f59e0b?style=for-the-badge">
+  <img alt="Beta 0.2.4" src="https://img.shields.io/badge/beta-0.2.4-f59e0b?style=for-the-badge">
   <img alt="In development" src="https://img.shields.io/badge/status-in%20development-eab308?style=for-the-badge">
   <img alt="Linux, macOS, and Windows" src="https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-0f766e?style=for-the-badge">
   <img alt="Python 3.12 or newer" src="https://img.shields.io/badge/Python-3.12%2B-3776AB?style=for-the-badge&logo=python&logoColor=white">
@@ -26,6 +26,7 @@ A desktop app for browsing OpenStack and other S3 buckets. Open files, change th
 - 💾 Save s3 connections
 - 🗂️ Double-click through folders
 - 🔎 Filter by name
+- ↕ Sort columns by name, size, or date
 - ✏️ Open and edit files right there — txt, yaml, xml, json, csv, and tiff
 - 🗺️ Preview GeoTIFFs up to 500 MB, and COGs from overviews, with metadata plus a choice of bands and color scales
 - 🖼️ Preview standard images — jpg, png, and the usual formats
