@@ -224,7 +224,7 @@ QPlainTextEdit#preview {{
     color: #e5e7eb;
     border: 1px solid {line};
     border-radius: 10px;
-    padding: 8px;
+    padding: 0;
     selection-background-color: #134e4a;
     selection-color: #ecfeff;
 }}

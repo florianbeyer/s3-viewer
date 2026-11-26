@@ -11,6 +11,17 @@ Changes sit under **Unreleased** until a version is declared.
 
 ### Fixed
 
+## [0.2.3] - 2026-11-26
+
+### Added
+
+- Several selected files download together, with one progress bar for the whole batch.
+- Save and download dialogs reopen in the folder used last time.
+
+### Fixed
+
+- Line numbers no longer cover the first characters of a preview.
+
 ## [0.2.2] - 2026-11-23
 
 ### Changed

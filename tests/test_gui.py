@@ -527,6 +527,18 @@ def test_secret_is_not_written_to_settings(qtbot, tmp_path):
     assert restored.secret_key.text() == ""
 
 
+def test_line_numbers_do_not_cover_the_text(qtbot, tmp_path):
+    window = MainWindow(session_factory=FakeSession, settings_path=str(tmp_path / "settings.ini"))
+    qtbot.addWidget(window)
+    window.show()
+    window.preview_text.setPlainText("\n".join(f"key{index}: value" for index in range(1, 80)))
+    editor = window.preview_text
+    gutter = editor._line_numbers.geometry()
+    viewport = editor.viewport().geometry()
+    assert gutter.width() == editor.line_number_width()
+    assert gutter.right() <= viewport.left()
+
+
 def test_bucket_events_during_startup_do_not_crash(qtbot, tmp_path):
     from PySide6.QtCore import QEvent
 
@@ -662,6 +674,62 @@ def _click_object(qtbot, window: MainWindow, name: str) -> None:
                 window.object_table.cellClicked.emit(index, 0)
             return
     raise AssertionError(name)
+
+
+def test_download_remembers_the_folder_and_counts_several_files(qtbot, tmp_path, monkeypatch):
+    from pathlib import Path
+
+    folder = tmp_path / "speicher"
+    folder.mkdir()
+    seen = {}
+
+    def save_one(*_args, **_kwargs):
+        seen["save"] = _args[2]
+        return str(folder / "readme.txt"), ""
+
+    def save_many(*_args, **_kwargs):
+        seen["dir"] = _args[2]
+        return str(folder)
+
+    monkeypatch.setattr("s3viewer.window.QFileDialog.getSaveFileName", save_one)
+    monkeypatch.setattr("s3viewer.window.QFileDialog.getExistingDirectory", save_many)
+    window = MainWindow(session_factory=FakeSession, settings_path=str(tmp_path / "settings.ini"))
+    qtbot.addWidget(window)
+    window.show()
+    window.session = FakeSession()
+    window.bucket_name = "projekt"
+    window._download_entries([ObjectEntry("readme.txt", "readme.txt", False, 11)])
+    qtbot.waitUntil(lambda: window._transfer_active is False and (folder / "readme.txt").exists(), timeout=4000)
+    assert seen["save"] == "readme.txt"
+
+    window._download_entries([ObjectEntry("readme.txt", "readme.txt", False, 11)])
+    qtbot.waitUntil(lambda: window._transfer_active is False, timeout=4000)
+    assert seen["save"] == str(folder / "readme.txt")
+
+    peaks = []
+
+    class Session(FakeSession):
+        def download(self, bucket, key, destination, progress=None, cancel=None):
+            data = b"a" * (11 if key.endswith("readme.txt") else 7)
+            if progress is not None:
+                progress(len(data))
+            Path(destination).write_bytes(data)
+            peaks.append(window.progress.value())
+
+    window.session = Session()
+    window._download_entries(
+        [
+            ObjectEntry("readme.txt", "readme.txt", False, 11),
+            ObjectEntry("notiz.txt", "notiz.txt", False, 7),
+        ]
+    )
+    assert seen["dir"] == str(folder)
+    qtbot.waitUntil(lambda: window._transfer_peak == 18 and window._transfer_active is False, timeout=4000)
+    assert window._qsettings().value("last_download_dir") == str(folder)
+    assert "2/2" in window.transfer_label.text()
+    assert (folder / "notiz.txt").read_bytes() == b"a" * 7
+    saved = list(folder.glob("readme*"))
+    assert any(path.read_bytes() == b"a" * 11 for path in saved)
 
 
 def test_transfer_bar_shows_bytes_for_upload_and_download(qtbot, tmp_path, monkeypatch):

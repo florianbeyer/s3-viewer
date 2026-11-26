@@ -178,6 +178,7 @@ STRINGS: dict[str, dict[str, str]] = {
     "download_cancelling": {"de": "Breche Download ab…", "en": "Cancelling download…"},
     "cancel_download": {"de": "Abbrechen", "en": "Cancel"},
     "transfer_download": {"de": "Download", "en": "Download"},
+    "transfer_file": {"de": "Download {index}/{count} · {name}", "en": "Download {index}/{count} · {name}"},
     "transfer_upload": {"de": "Upload", "en": "Upload"},
     "not_connected": {"de": "Nicht verbunden", "en": "Not connected"},
     "parent_folder": {"de": "Übergeordneter Ordner", "en": "Parent folder"},

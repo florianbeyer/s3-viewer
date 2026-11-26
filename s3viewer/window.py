@@ -79,6 +79,7 @@ from s3viewer.tiffpreview import (
     style_notice,
     tiff_detail_rows,
 )
+from s3viewer.download import destination_for, relative_name, saved_message, unique_path
 from s3viewer.upload import (
     colliding_keys,
     folder_marker_key,
@@ -129,19 +130,35 @@ class CodeEditor(QPlainTextEdit):
         self._line_numbers = LineNumberArea(self)
         self.blockCountChanged.connect(self._update_line_number_width)
         self.updateRequest.connect(self._update_line_number_area)
+        self.document().setDocumentMargin(6)
         self._update_line_number_width()
 
     def line_number_width(self) -> int:
         digits = len(str(max(1, self.blockCount())))
-        return 12 + self.fontMetrics().horizontalAdvance("9") * digits
+        metrics = self.fontMetrics()
+        digit_width = max(metrics.horizontalAdvance(str(number)) for number in range(10))
+        return 10 + digit_width * digits + 14
 
     def _update_line_number_width(self) -> None:
         self.setViewportMargins(self.line_number_width(), 0, 0, 0)
+        self._position_line_numbers()
+
+    def _position_line_numbers(self) -> None:
+        rect = self.contentsRect()
+        self._line_numbers.setGeometry(QRect(rect.left(), rect.top(), self.line_number_width(), rect.height()))
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt-API
         super().resizeEvent(event)
-        rect = self.contentsRect()
-        self._line_numbers.setGeometry(QRect(rect.left(), rect.top(), self.line_number_width(), rect.height()))
+        self._position_line_numbers()
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt-API
+        super().showEvent(event)
+        self._update_line_number_width()
+
+    def changeEvent(self, event) -> None:  # noqa: N802 - Qt-API
+        super().changeEvent(event)
+        if event.type() in {QEvent.Type.StyleChange, QEvent.Type.FontChange}:
+            self._update_line_number_width()
 
     def _update_line_number_area(self, rect, dy: int) -> None:
         if dy:
@@ -220,6 +237,7 @@ class FitImage(QLabel):
 class TransferSignals(QObject):
     planned = Signal(int)
     advanced = Signal(int)
+    detail = Signal(str)
 
 
 REGION_CHOICES = (
@@ -286,6 +304,7 @@ class MainWindow(QMainWindow):
         self._transfer_done = 0
         self._transfer_total = 0
         self._transfer_peak = 0
+        self._last_download_dir = ""
 
         self.setWindowTitle(APP_TITLE)
         self.resize(1280, 800)
@@ -600,6 +619,7 @@ class MainWindow(QMainWindow):
         self.cancel_download_button.setObjectName("cancelTransfer")
         self.cancel_download_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.cancel_download_button.clicked.connect(self._cancel_download)
+        self._transfer_signals.detail.connect(self.transfer_label.setText)
         transfer_layout.addWidget(self.transfer_label)
         transfer_layout.addWidget(self.progress, 1)
         transfer_layout.addWidget(self.transfer_amount)
@@ -1344,6 +1364,7 @@ class MainWindow(QMainWindow):
         self._set_connection_collapsed(_as_bool(settings.value("connection_collapsed"), False))
         set_language(str(settings.value("language", "de") or "de"))
         self._dark = _as_bool(settings.value("dark_mode"), False)
+        self._last_download_dir = str(settings.value("last_download_dir", "") or "")
         self.dark_button.blockSignals(True)
         self.dark_button.setChecked(self._dark)
         self.dark_button.blockSignals(False)
@@ -1367,6 +1388,7 @@ class MainWindow(QMainWindow):
         settings.setValue("connection_collapsed", "1" if self._connection_collapsed else "0")
         settings.setValue("language", language())
         settings.setValue("dark_mode", "1" if self._dark else "0")
+        settings.setValue("last_download_dir", self._last_download_dir)
         settings.setValue("geometry", self.saveGeometry())
         settings.setValue("window_state", self.saveState())
         settings.remove("secret_key")
@@ -2063,10 +2085,32 @@ class MainWindow(QMainWindow):
         self._submit("save-text", work, done, self._set_banner)
 
     def _download(self) -> None:
-        entry = self._current_entry
-        if entry is None or entry.is_folder or self.session is None:
+        selected = self._selected_entries()
+        if len(selected) > 1:
+            self._download_entries(selected)
             return
-        self._download_entries([entry])
+        entry = self._current_entry
+        if entry is not None and not entry.is_folder:
+            self._download_entries([entry])
+            return
+        if selected:
+            self._download_entries(selected)
+
+    def _download_directory(self) -> str:
+        folder = getattr(self, "_last_download_dir", "") or ""
+        if folder and Path(folder).is_dir():
+            return folder
+        return ""
+
+    def _remember_download_directory(self, path: str) -> None:
+        candidate = Path(path)
+        folder = str(candidate if candidate.is_dir() else candidate.parent)
+        if not folder:
+            return
+        self._last_download_dir = folder
+        settings = self._qsettings()
+        settings.setValue("last_download_dir", folder)
+        settings.sync()
 
     def _download_selected(self) -> None:
         entries = self._selected_entries()
@@ -2259,14 +2303,18 @@ class MainWindow(QMainWindow):
         bucket = self.bucket_name
         prefix = self.prefix
         single_file = len(entries) == 1 and not entries[0].is_folder
+        start_dir = self._download_directory()
         if single_file:
-            destination, _selected = QFileDialog.getSaveFileName(self, tr("save_one"), entries[0].name)
+            suggestion = str(Path(start_dir) / entries[0].name) if start_dir else entries[0].name
+            destination, _selected = QFileDialog.getSaveFileName(self, tr("save_one"), suggestion)
             if not destination:
                 return
+            self._remember_download_directory(destination)
             self.statusBar().showMessage(tr("saving", name=entries[0].name))
             size = int(entries[0].size or 0)
             self._download_cancel = CancelFlag()
             self._begin_transfer(size if size > 0 else 1, kind="download")
+            self._transfer_signals.detail.emit(tr("transfer_file", index=1, count=1, name=entries[0].name))
 
             def work_one() -> str:
                 self._ensure_download_continues()
@@ -2295,12 +2343,15 @@ class MainWindow(QMainWindow):
             )
             return
 
-        directory = QFileDialog.getExistingDirectory(self, tr("choose_download_dir"))
+        directory = QFileDialog.getExistingDirectory(self, tr("choose_download_dir"), start_dir)
         if not directory:
             return
+        self._remember_download_directory(directory)
         self.statusBar().showMessage(tr("saving_files"))
         self._download_cancel = CancelFlag()
-        self._begin_transfer(0, kind="download")
+        known_sizes = all(not entry.is_folder and entry.size for entry in entries)
+        initial_total = sum(int(entry.size or 0) for entry in entries) if known_sizes else 0
+        self._begin_transfer(initial_total, kind="download")
 
         def work_many() -> tuple[list[str], bool]:
             self._ensure_download_continues()
@@ -2315,10 +2366,14 @@ class MainWindow(QMainWindow):
             use_bytes = total > 0
             self._transfer_signals.planned.emit(total if use_bytes else len(jobs))
             saved: list[str] = []
-            for key, relative, size in jobs:
+            count = len(jobs)
+            for index, (key, relative, size) in enumerate(jobs, start=1):
                 self._ensure_download_continues()
                 target = unique_path(destination_for(Path(directory), relative))
                 target.parent.mkdir(parents=True, exist_ok=True)
+                self._transfer_signals.detail.emit(
+                    tr("transfer_file", index=index, count=count, name=target.name)
+                )
                 if use_bytes:
                     self._transfer_one(
                         size,
